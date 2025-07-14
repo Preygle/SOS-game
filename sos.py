@@ -48,6 +48,7 @@ S = pyglet.resource.image('s.png')
 O = pyglet.resource.image('o.png')
 cellBG = pyglet.resource.image('cell.png')
 cell_selected = pyglet.resource.image('cell_selected.png')
+background = pyglet.resource.image('background.png')
 
 for i in range(no_of_cells):
     for j in range(no_of_cells):
@@ -61,7 +62,7 @@ for i in range(no_of_cells):
 selected_cell = None
 keys = key.KeyStateHandler()
 
-square = shapes.Rectangle(gridX, gridY, cellSize + no_of_cells * space, cellSize + no_of_cells * space, color=(255, 255, 255), batch=batch)
+
 
 scores = {'P1': 0, 'P2': 0}
 label = pyglet.text.Label('', font_name='Arial', font_size=20, x=10, y=window.height - 30, batch=batch)
@@ -251,8 +252,10 @@ def on_key_press(symbol, modifiers):
 def on_draw():
     window.clear()
     if game_state == GameState.HOME:
+        background.blit(0, 0, width=window.width, height=window.height)
         home_batch.draw()
     elif game_state == GameState.PLAYING:
+        background.blit(0, 0, width=window.width, height=window.height)
         batch.draw()    
         if hc:
              hc.draw()
@@ -263,6 +266,7 @@ def on_draw():
         highlight_batch.draw()
         
     elif game_state == GameState.GAME_OVER:
+        background.blit(0, 0, width=window.width, height=window.height)
         batch.draw()
         
 
