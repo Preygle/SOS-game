@@ -1,8 +1,15 @@
 import pyglet
 from pyglet import shapes
 from pyglet.window import key
+from enum import Enum
+
+class GameState(Enum):
+    HOME = 0
+    PLAYING = 1
+    GAME_OVER = 2
 
 window = pyglet.window.Window(1080, 1080, fullscreen=True)
+game_state = GameState.HOME
 line_thickness = 5
 space = line_thickness
 grid_size = 60 + 4 * space #60
@@ -23,6 +30,16 @@ cellY = window.height // 2 + grid_size * no_of_cells // 2
 cellSize = grid_size * no_of_cells
 
 batch = pyglet.graphics.Batch()
+home_batch = pyglet.graphics.Batch()
+
+# Home Screen Elements
+home_title = pyglet.text.Label('SOS Game', font_name='Arial', font_size=72,
+                               x=window.width//2, y=window.height//2 + 100,
+                               anchor_x='center', anchor_y='center', batch=home_batch)
+start_button = shapes.Rectangle(window.width//2 - 100, window.height//2 - 50, 200, 50, color=(0, 200, 0), batch=home_batch)
+start_button_label = pyglet.text.Label('Start Game', font_name='Arial', font_size=24,
+                                       x=window.width//2, y=window.height//2 - 25,
+                                       anchor_x='center', anchor_y='center', batch=home_batch)
 
 pyglet.resource.path = ['assets']
 pyglet.resource.reindex()
@@ -47,8 +64,22 @@ keys = key.KeyStateHandler()
 square = shapes.Rectangle(gridX, gridY, cellSize + no_of_cells * space, cellSize + no_of_cells * space, color=(255, 255, 255), batch=batch)
 
 scores = {'P1': 0, 'P2': 0}
-label = pyglet.text.Label(f"P1: {scores['P1']} | P2: {scores['P2']} P{current_player + 1} Turn",
-                          font_name='Arial', font_size=20, x=10, y=window.height - 30, batch=batch)
+label = pyglet.text.Label('', font_name='Arial', font_size=20, x=10, y=window.height - 30, batch=batch)
+
+def update_label():
+    global label
+    if game_state == GameState.PLAYING:
+        label.text = f"P1: {scores['P1']} | P2: {scores['P2']} P{current_player + 1} Turn"
+    elif game_state == GameState.GAME_OVER:
+        if scores['P1'] > scores['P2']:
+            winner_text = "P1 Wins!"
+        elif scores['P2'] > scores['P1']:
+            winner_text = "P2 Wins!"
+        else:
+            winner_text = "It's a Draw!"
+        label.text = f"Game Over! {winner_text}"
+
+update_label()
 
 keys = key.KeyStateHandler()
 window.push_handlers(keys)
@@ -217,21 +248,43 @@ def on_key_press(symbol, modifiers):
                     winner_text = "It's a Draw!"
 
                 print("Game Over!", winner_text)
-                label.text = f"Game Over! {winner_text}"
-            else:
-                label.text = f"P1: {scores['P1']} | P2: {scores['P2']} P{current_player + 1} Turn"
+                game_state = GameState.GAME_OVER
+            update_label()
             print(SOS)
 
 
 @window.event
 def on_draw():
     window.clear()
-    batch.draw()    
-    if hc:
-         hc.draw()
-    if sprites:
-        for sprite in sprites:
-            sprite.draw()
-    overlay_batch.draw()
-    highlight_batch.draw()
+    if game_state == GameState.HOME:
+        home_batch.draw()
+    elif game_state == GameState.PLAYING:
+        batch.draw()    
+        if hc:
+             hc.draw()
+        if sprites:
+            for sprite in sprites:
+                sprite.draw()
+        overlay_batch.draw()
+        highlight_batch.draw()
+        
+    elif game_state == GameState.GAME_OVER:
+        batch.draw()
+        
+
+@window.event
+def on_mouse_press(x, y, button, modifiers):
+    global game_state, selected_cell, hc
+    if game_state == GameState.HOME:
+        if start_button.x <= x <= start_button.x + start_button.width and \
+           start_button.y <= y <= start_button.y + start_button.height:
+            game_state = GameState.PLAYING
+    elif game_state == GameState.PLAYING:
+        if gridX <= x <= gridX + cellSize and gridY <= y <= gridY + cellSize:
+            cols = int((x - gridX) // (grid_size + space))
+            rows = int((y - gridY) // (grid_size + space))
+            if board[rows][cols] == ' ':
+                    selected_cell = (rows, cols)
+                    highlight_cell(rows, cols)
+
 pyglet.app.run()
