@@ -12,8 +12,18 @@ window = pyglet.window.Window(fullscreen=True)
 game_state = GameState.HOME
 line_thickness = 5
 space = line_thickness
-grid_size = 60 + 4 * space #60
 no_of_cells = 8 #8 cells
+
+# Calculate grid_size dynamically based on window dimensions
+# Aim for the grid to take up 90% of the smaller window dimension.
+# This will leave a 5% margin on each side.
+available_dimension = min(window.width, window.height) * 0.9
+total_space_for_gaps = (no_of_cells - 1) * space
+grid_size = (available_dimension - total_space_for_gaps) / no_of_cells
+
+# Calculate total grid dimensions (including cells and spaces)
+total_grid_dimension = no_of_cells * grid_size + total_space_for_gaps
+
 board = [[' ' for i in range(no_of_cells)] for i in range(no_of_cells)]
 players = ['P1', 'P2']
 SOS = []
@@ -22,12 +32,19 @@ line = []
 
 current_player = 0
 hc = None
-gridX = window.width // 2 - grid_size * no_of_cells // 2
-gridY = cellY = window.height // 2 - grid_size * no_of_cells // 2
 
-cellX = window.width // 2 - grid_size * no_of_cells // 2
-cellY = window.height // 2 + grid_size * no_of_cells // 2
-cellSize = grid_size * no_of_cells
+# Calculate the bottom-left corner of the entire grid
+gridX = window.width // 2 - total_grid_dimension // 2
+gridY = window.height // 2 - total_grid_dimension // 2
+
+# These are for drawing the grid lines.
+# cellX is the left edge of the grid.
+# cellY is the top edge of the grid.
+cellX = gridX
+cellY = gridY + total_grid_dimension
+
+# cellSize is the total dimension of all cells combined, without spaces.
+cellSize = no_of_cells * grid_size
 
 batch = pyglet.graphics.Batch()
 home_batch = pyglet.graphics.Batch()
