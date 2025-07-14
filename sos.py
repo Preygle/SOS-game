@@ -24,6 +24,9 @@ cellSize = grid_size * no_of_cells
 
 batch = pyglet.graphics.Batch()
 
+pyglet.resource.path = ['assets']
+pyglet.resource.reindex()
+
 S = pyglet.resource.image('s.png')
 O = pyglet.resource.image('o.png')
 cellBG = pyglet.resource.image('cell.png')
