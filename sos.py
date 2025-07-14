@@ -94,45 +94,51 @@ def check_win():
                     
                     s1, o, s2 = sos_coords_raw
 
-                    if not is_wrapped_sos:
-                        draw_line(s1[1], s1[0], s2[1], s2[0], current_player, dotted=False)
-                    else:
-                        draw_line(s1[1], s1[0], o[1], o[0], current_player, dotted=True)
-                        draw_line(o[1], o[0], s2[1], s2[0], current_player, dotted=True)
+                    draw_line(s1[1], s1[0], s2[1], s2[0], current_player, is_wrapped_sos)
 
     return found_sos
 
 
 overlay_batch = pyglet.graphics.Batch()
 
-def draw_line(x1, y1, x2, y2, player, dotted=False):
+def draw_line(x1, y1, x2, y2, player, is_wrapped=False):
    global line
-   start_x = gridX + x1 * (grid_size + space) + grid_size // 2
-   start_y = gridY + y1 * (grid_size + space) + grid_size // 2
-   end_x = gridX + x2 * (grid_size + space) + grid_size // 2
-   end_y = gridY + y2 * (grid_size + space) + grid_size // 2
+   start_x_screen = gridX + x1 * (grid_size + space) + grid_size // 2
+   start_y_screen = gridY + y1 * (grid_size + space) + grid_size // 2
+   end_x_screen = gridX + x2 * (grid_size + space) + grid_size // 2
+   end_y_screen = gridY + y2 * (grid_size + space) + grid_size // 2
    colors = [(0, 183, 239), (237, 28, 36)] 
    
-   if dotted:
-        dx = end_x - start_x
-        dy = end_y - start_y
-        length = (dx**2 + dy**2)**0.5
-        if length == 0: return
+   if is_wrapped:
+        horizontal_wrap = (y1 == y2) and (abs(x1 - x2) > 1)
+        vertical_wrap = (x1 == x2) and (abs(y1 - y2) > 1)
 
-        segment_length = 10
-        gap_length = 5
-        total_segment = segment_length + gap_length
+        if horizontal_wrap:
+            line.append(shapes.Line(start_x_screen, start_y_screen, gridX + cellSize, start_y_screen, thickness=line_thickness, color=colors[player], batch=overlay_batch))
+            line.append(shapes.Line(gridX, end_y_screen, end_x_screen, end_y_screen, thickness=line_thickness, color=colors[player], batch=overlay_batch))
+        elif vertical_wrap:
+            line.append(shapes.Line(start_x_screen, start_y_screen, start_x_screen, gridY + cellSize, thickness=line_thickness, color=colors[player], batch=overlay_batch))
+            line.append(shapes.Line(end_x_screen, gridY, end_x_screen, end_y_screen, thickness=line_thickness, color=colors[player], batch=overlay_batch))
+        else: # Diagonal wrap
+            dx = end_x_screen - start_x_screen
+            dy = end_y_screen - start_y_screen
+            length = (dx**2 + dy**2)**0.5
+            if length == 0: return
 
-        num_segments = int(length / total_segment)
+            segment_length = 10
+            gap_length = 5
+            total_segment = segment_length + gap_length
 
-        for i in range(num_segments):
-            seg_start_x = start_x + (dx / length) * (i * total_segment)
-            seg_start_y = start_y + (dy / length) * (i * total_segment)
-            seg_end_x = start_x + (dx / length) * (i * total_segment + segment_length)
-            seg_end_y = start_y + (dy / length) * (i * total_segment + segment_length)
-            line.append(shapes.Line(seg_start_x, seg_start_y, seg_end_x, seg_end_y, thickness=line_thickness, color=colors[player], batch=overlay_batch))
+            num_segments = int(length / total_segment)
+
+            for i in range(num_segments):
+                seg_start_x = start_x_screen + (dx / length) * (i * total_segment)
+                seg_start_y = start_y_screen + (dy / length) * (i * total_segment)
+                seg_end_x = start_x_screen + (dx / length) * (i * total_segment + segment_length)
+                seg_end_y = start_y_screen + (dy / length) * (i * total_segment + segment_length)
+                line.append(shapes.Line(seg_start_x, seg_start_y, seg_end_x, seg_end_y, thickness=line_thickness, color=colors[player], batch=overlay_batch))
    else:
-       line.append(shapes.Line(start_x, start_y, end_x, end_y, thickness=line_thickness, color=colors[player], batch=overlay_batch))
+       line.append(shapes.Line(start_x_screen, start_y_screen, end_x_screen, end_y_screen, thickness=line_thickness, color=colors[player], batch=overlay_batch))
 
 
 highlight_batch = pyglet.graphics.Batch()
