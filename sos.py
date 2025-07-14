@@ -8,7 +8,7 @@ class GameState(Enum):
     PLAYING = 1
     GAME_OVER = 2
 
-window = pyglet.window.Window(1080, 1080, fullscreen=True)
+window = pyglet.window.Window(fullscreen=True)
 game_state = GameState.HOME
 line_thickness = 5
 space = line_thickness
