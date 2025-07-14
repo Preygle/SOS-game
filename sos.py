@@ -65,48 +65,74 @@ def check_win():
 
     def is_sos(c, r, dc, dr):
         s1_r, s1_c = r, c
-        o_r, o_c = (r + dr) % no_of_cells, (c + dc) % no_of_cells
-        s2_r, s2_c = (r + 2 * dr) % no_of_cells, (c + 2 * dc) % no_of_cells
+        
+        o_orig_r, o_orig_c = r + dr, c + dc
+        s2_orig_r, s2_orig_c = r + 2 * dr, c + 2 * dc
+
+        o_r, o_c = o_orig_r % no_of_cells, o_orig_c % no_of_cells
+        s2_r, s2_c = s2_orig_r % no_of_cells, s2_orig_c % no_of_cells
 
         if board[s1_r][s1_c] == 'S' and board[o_r][o_c] == 'O' and board[s2_r][s2_c] == 'S':
-            raw = ((s1_r, s1_c), (o_r, o_c), (s2_r, s2_c))
-            srt = tuple(sorted(raw))
-            return raw, srt
-        return None, None
+            raw_coords = ((s1_r, s1_c), (o_r, o_c), (s2_r, s2_c))
+            sorted_coords = tuple(sorted(raw_coords))
+
+            is_wrapped_sos = (o_orig_r != o_r or o_orig_c != o_c) or \
+                             (s2_orig_r != s2_r or s2_orig_c != s2_c)
+            
+            return raw_coords, sorted_coords, is_wrapped_sos
+        return None, None, False
 
     found_sos = False
     for r in range(no_of_cells):
         for c in range(no_of_cells):
             for dr, dc in [(0, 1), (1, 0), (1, 1), (1, -1)]:
-                sos_coords_raw, sos_coords_sorted = is_sos(c, r, dc, dr)
+                sos_coords_raw, sos_coords_sorted, is_wrapped_sos = is_sos(c, r, dc, dr)
                 if sos_coords_raw and sos_coords_sorted not in SOS:
                     SOS.append(sos_coords_sorted)
                     scores[players[current_player]] += 1
                     found_sos = True
                     
                     s1, o, s2 = sos_coords_raw
-                    
-                    is_wrapped = abs(s1[0] - o[0]) > 1 or abs(s1[1] - o[1]) > 1 or \
-                                 abs(o[0] - s2[0]) > 1 or abs(o[1] - s2[1]) > 1
 
-                    if not is_wrapped:
-                        draw_line(s1[1], s1[0], s2[1], s2[0], current_player)
+                    if not is_wrapped_sos:
+                        draw_line(s1[1], s1[0], s2[1], s2[0], current_player, dotted=False)
                     else:
-                        draw_line(s1[1], s1[0], o[1], o[0], current_player)
-                        draw_line(o[1], o[0], s2[1], s2[0], current_player)
+                        draw_line(s1[1], s1[0], o[1], o[0], current_player, dotted=True)
+                        draw_line(o[1], o[0], s2[1], s2[0], current_player, dotted=True)
+
     return found_sos
 
 
 overlay_batch = pyglet.graphics.Batch()
 
-def draw_line(x1, y1, x2, y2, player):
+def draw_line(x1, y1, x2, y2, player, dotted=False):
    global line
    start_x = gridX + x1 * (grid_size + space) + grid_size // 2
    start_y = gridY + y1 * (grid_size + space) + grid_size // 2
    end_x = gridX + x2 * (grid_size + space) + grid_size // 2
    end_y = gridY + y2 * (grid_size + space) + grid_size // 2
    colors = [(0, 183, 239), (237, 28, 36)] 
-   line.append(shapes.Line(start_y, start_x, end_y, end_x, thickness=line_thickness, color=colors[player], batch=overlay_batch))
+   
+   if dotted:
+        dx = end_x - start_x
+        dy = end_y - start_y
+        length = (dx**2 + dy**2)**0.5
+        if length == 0: return
+
+        segment_length = 10
+        gap_length = 5
+        total_segment = segment_length + gap_length
+
+        num_segments = int(length / total_segment)
+
+        for i in range(num_segments):
+            seg_start_x = start_x + (dx / length) * (i * total_segment)
+            seg_start_y = start_y + (dy / length) * (i * total_segment)
+            seg_end_x = start_x + (dx / length) * (i * total_segment + segment_length)
+            seg_end_y = start_y + (dy / length) * (i * total_segment + segment_length)
+            line.append(shapes.Line(seg_start_x, seg_start_y, seg_end_x, seg_end_y, thickness=line_thickness, color=colors[player], batch=overlay_batch))
+   else:
+       line.append(shapes.Line(start_x, start_y, end_x, end_y, thickness=line_thickness, color=colors[player], batch=overlay_batch))
 
 
 highlight_batch = pyglet.graphics.Batch()
@@ -203,4 +229,3 @@ def on_draw():
     overlay_batch.draw()
     highlight_batch.draw()
 pyglet.app.run()
-
