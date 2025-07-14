@@ -102,11 +102,11 @@ update_label()
 keys = key.KeyStateHandler()
 window.push_handlers(keys)
 
-for i in range(0,no_of_cells + 1):
-    #horizontal Lines
-    line.append(shapes.Line(cellX + grid_size * i, cellY, cellX + grid_size * i, cellY - cellSize, thickness=line_thickness, color=(255, 255, 255), batch=batch))
-    #Vertical lines
-    line.append(shapes.Line(cellX, cellY - grid_size * i, cellX + cellSize, cellY - grid_size * i, thickness=line_thickness, color=(255, 255, 255), batch=batch))
+# for i in range(0,no_of_cells + 1):
+#     #horizontal Lines
+#     line.append(shapes.Line(cellX + grid_size * i, cellY, cellX + grid_size * i, cellY - cellSize, thickness=line_thickness, color=(255, 255, 255), batch=batch))
+#     #Vertical lines
+#     line.append(shapes.Line(cellX, cellY - grid_size * i, cellX + cellSize, cellY - grid_size * i, thickness=line_thickness, color=(255, 255, 255), batch=batch))
 
 
 def check_win():
@@ -185,14 +185,14 @@ def draw_line(x1, y1, x2, y2, player, dotted=False):
 
 
 highlight_batch = pyglet.graphics.Batch()
-def highlight_cell(x, y):
+def highlight_cell(y, x):
     global hc
     begX = gridX + x * (grid_size + space)
     begY = gridY + y * (grid_size + space)
 
     hc = pyglet.sprite.Sprite(cell_selected,
-                                  begY,
-                                  begX
+                                  begX,
+                                  begY
                                  , batch=highlight_batch)
     hc.opacity = 255
     hc.scale = (grid_size) / max(cell_selected.width, cell_selected.height)
