@@ -63,43 +63,37 @@ for i in range(0,no_of_cells + 1):
 def check_win():
     global scores, current_player, SOS
     def is_sos(x, y, dx, dy):
-        try:
-            return board[y][x] == 'S' and board[y + dy][x + dx] == 'O' and board[y + 2 * dy][x + 2 * dx] == 'S'
-        except IndexError:
-            return False
+        s1_y, s1_x = y, x
+        o_y, o_x = (y + dy) % no_of_cells, (x + dx) % no_of_cells
+        s2_y, s2_x = (y + 2 * dy) % no_of_cells, (x + 2 * dx) % no_of_cells
+
+        if board[s1_y][s1_x] == 'S' and board[o_y][o_x] == 'O' and board[s2_y][s2_x] == 'S':
+            return tuple(sorted([(s1_y, s1_x), (o_y, o_x), (s2_y, s2_x)]))
+        return None
+
     found_sos = False
-    for x in range(no_of_cells):
-        for y in range(no_of_cells):
-            if is_sos(y, x, 1, 0):
-                
-                if [(y, x), (y + 1, x), (y + 2, x)] not in SOS:
-                    SOS.append([(y, x), (y + 1, x), (y + 2, x)])
-                    draw_line(x, y, x, y + 2, current_player)
+    for y in range(no_of_cells):
+        for x in range(no_of_cells):
+            for dy, dx in [(0, 1), (1, 0), (1, 1), (1, -1)]:
+                sos_coords = is_sos(x, y, dx, dy)
+                if sos_coords and sos_coords not in SOS:
+                    SOS.append(sos_coords)
                     scores[players[current_player]] += 1
                     found_sos = True
-                
-            if is_sos(y, x, 0, 1):
-                
-                if [(y, x), (y , x + 1), (y, x + 2)] not in SOS:
-                    SOS.append([(y, x), (y, x + 1), (y, x + 2)])
-                    draw_line(x, y, x + 2, y, current_player)
-                    scores[players[current_player]] += 1
-                    found_sos = True
-            if is_sos(y, x, 1, 1):
-                
-                if [(y, x), (y + 1, x + 1), (y + 2, x + 2)] not in SOS:
-                    SOS.append([(y, x), (y + 1, x + 1), (y + 2, x + 2)])
-                    draw_line(x, y, x + 2, y + 2, current_player)
-                    scores[players[current_player]] += 1
-                    found_sos = True
+                    
+                    is_wrapped = False
+                    for i in range(2):
+                        p1 = sos_coords[i]
+                        p2 = sos_coords[i+1]
+                        if abs(p1[0] - p2[0]) > 1 or abs(p1[1] - p2[1]) > 1:
+                            is_wrapped = True
+                            break
+                    
+                    if not is_wrapped:
+                        start_coords = min(sos_coords, key=lambda item: (item[0], item[1]))
+                        end_coords = max(sos_coords, key=lambda item: (item[0], item[1]))
+                        draw_line(start_coords[1], start_coords[0], end_coords[1], end_coords[0], current_player)
 
-            if is_sos(y, x, -1, 1):
-
-                if [(y, x), (y - 1, x + 1), (y - 2, x + 2)] not in SOS:
-                    SOS.append([(y, x), (y - 1, x + 1), (y - 2, x + 2)])
-                    draw_line(x, y, x + 2, y - 2, current_player)
-                    scores[players[current_player]] += 1
-                    found_sos = True
     return found_sos
 
 
