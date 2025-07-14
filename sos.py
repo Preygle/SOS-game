@@ -62,38 +62,38 @@ for i in range(0,no_of_cells + 1):
 
 def check_win():
     global scores, current_player, SOS
-    def is_sos(x, y, dx, dy):
-        s1_y, s1_x = y, x
-        o_y, o_x = (y + dy) % no_of_cells, (x + dx) % no_of_cells
-        s2_y, s2_x = (y + 2 * dy) % no_of_cells, (x + 2 * dx) % no_of_cells
 
-        if board[s1_y][s1_x] == 'S' and board[o_y][o_x] == 'O' and board[s2_y][s2_x] == 'S':
-            return tuple(sorted([(s1_y, s1_x), (o_y, o_x), (s2_y, s2_x)]))
-        return None
+    def is_sos(c, r, dc, dr):
+        s1_r, s1_c = r, c
+        o_r, o_c = (r + dr) % no_of_cells, (c + dc) % no_of_cells
+        s2_r, s2_c = (r + 2 * dr) % no_of_cells, (c + 2 * dc) % no_of_cells
+
+        if board[s1_r][s1_c] == 'S' and board[o_r][o_c] == 'O' and board[s2_r][s2_c] == 'S':
+            raw = ((s1_r, s1_c), (o_r, o_c), (s2_r, s2_c))
+            srt = tuple(sorted(raw))
+            return raw, srt
+        return None, None
 
     found_sos = False
-    for y in range(no_of_cells):
-        for x in range(no_of_cells):
-            for dy, dx in [(0, 1), (1, 0), (1, 1), (1, -1)]:
-                sos_coords = is_sos(x, y, dx, dy)
-                if sos_coords and sos_coords not in SOS:
-                    SOS.append(sos_coords)
+    for r in range(no_of_cells):
+        for c in range(no_of_cells):
+            for dr, dc in [(0, 1), (1, 0), (1, 1), (1, -1)]:
+                sos_coords_raw, sos_coords_sorted = is_sos(c, r, dc, dr)
+                if sos_coords_raw and sos_coords_sorted not in SOS:
+                    SOS.append(sos_coords_sorted)
                     scores[players[current_player]] += 1
                     found_sos = True
                     
-                    is_wrapped = False
-                    for i in range(2):
-                        p1 = sos_coords[i]
-                        p2 = sos_coords[i+1]
-                        if abs(p1[0] - p2[0]) > 1 or abs(p1[1] - p2[1]) > 1:
-                            is_wrapped = True
-                            break
+                    s1, o, s2 = sos_coords_raw
                     
-                    if not is_wrapped:
-                        start_coords = min(sos_coords, key=lambda item: (item[0], item[1]))
-                        end_coords = max(sos_coords, key=lambda item: (item[0], item[1]))
-                        draw_line(start_coords[1], start_coords[0], end_coords[1], end_coords[0], current_player)
+                    is_wrapped = abs(s1[0] - o[0]) > 1 or abs(s1[1] - o[1]) > 1 or \
+                                 abs(o[0] - s2[0]) > 1 or abs(o[1] - s2[1]) > 1
 
+                    if not is_wrapped:
+                        draw_line(s1[1], s1[0], s2[1], s2[0], current_player)
+                    else:
+                        draw_line(s1[1], s1[0], o[1], o[0], current_player)
+                        draw_line(o[1], o[0], s2[1], s2[0], current_player)
     return found_sos
 
 
