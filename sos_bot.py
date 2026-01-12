@@ -3,7 +3,136 @@ from pyglet import shapes
 from pyglet.window import key
 from enum import Enum
 import random
-from greedy_bot import SOSBot   # make sure sos_bot.py is in same folder
+import torch
+import numpy as np
+import os
+from greedy_bot import SOSBot
+from models import AlphaZeroResNet
+from alpha_mcts import AlphaMCTS, GameWrapper
+
+# -----------------------
+# AlphaZero Wrapper
+# -----------------------
+class AlphaBot:
+    def __init__(self, model_path='checkpoints/best.pth'):
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        # Input channels must match training (now 6)
+        self.model = AlphaZeroResNet(8, 4, 64, input_channels=6).to(self.device)
+        self.model_loaded = False
+        
+        if os.path.exists(model_path):
+            try:
+                self.model.load_state_dict(torch.load(model_path, map_location=self.device))
+                self.model.eval()
+                self.model_loaded = True
+                print(f"AlphaZero model loaded from {model_path}")
+            except Exception as e:
+                print(f"Failed to load model: {e}")
+        else:
+            print(f"No model found at {model_path}, falling back to Greedy.")
+
+        # MCTS Args for playing
+        self.args = {
+            'num_simulations': 100, # Higher for better play
+            'c_puct': 1.0,
+            'device': self.device
+        }
+        self.mcts = AlphaMCTS(self.model, GameWrapper, self.args)
+
+    def choose_move(self, board_chars):
+        # board_chars is 8x8 list of 'S', 'O', ' '
+        # Convert to GameWrapper/Logic format (0=Empty, 1=S, 2=O)
+        board_np = np.zeros((8, 8), dtype=int)
+        for r in range(8):
+            for c in range(8):
+                char = board_chars[r][c]
+                if char == 'S': board_np[r, c] = 1
+                elif char == 'O': board_np[r, c] = 2
+        
+        # We also need current scores and player?
+        # The GUI tracks scores in 'scores' dict.
+        # But MCTS state needs precise State Dict.
+        # Actually, for "Next Move", we just need the board configuration mostly,
+        # provided we assume we are the current player.
+        # MCTS expects full state dict.
+        
+        # Reconstruct State Dict from GUI globals
+        # Note: We can't easily access globals here without passing them.
+        # Simplification: pass only board, assume scores/player irrelevant for *finding* best move?
+        # NO, scores matter for deciding if we can get a bonus turn.
+        # We'll need to update choose_move signature or access globals.
+        # For now, let's just reconstruct what we can.
+        
+        # We will assume current_player is US (Bot).
+        # We need to know 'scores' to know if a move gives us another turn?
+        # Game logic calculates that dynamically.
+        
+        # Let's create a dummy state with just the board.
+        # Scores don't affect *legal* moves, creating SOS is always good.
+        state = {
+            'board': board_np,
+            'scores': {0: 0, 1: 0}, # Placeholder
+            'current_player': 1, # Bot is 1 in MCTS logic (P2 usually)
+            'sos_patterns': set() # We don't track past patterns easily here... 
+                                  # THIS IS A PROBLEM: If we don't know existing patterns, we might count old ones.
+        }
+        
+        # CRITICAL: We need accurate sos_patterns to avoid recounting.
+        # The GUI has `SOS` global list. We represent it as set of tuples.
+        # GUI `SOS` is list of sorted coords.
+        sos_set = set()
+        # GUI SOS is list of ((r,c)...). 
+        # Logic expects list of ((r,c)...) too. 
+        # Just pass it if we can. 
+        
+        # FIX: We will update `choose_move` in the calling code to pass `sos_patterns` and `scores`.
+        
+        # Run MCTS
+        # Since we don't have perfect state, we rely on the Neural Net's raw policy mostly if MCTS fails?
+        # No, we need MCTS to work.
+        pass 
+
+    def choose_move_wrapper(self, board, current_sos, current_scores, current_player_idx):
+        if not self.model_loaded:
+            return None # Signal to use Greedy
+
+        # Convert Board
+        board_np = np.zeros((8, 8), dtype=int)
+        for r in range(8):
+            for c in range(8):
+                char = board[r][c]
+                if char == 'S': board_np[r, c] = 1
+                elif char == 'O': board_np[r, c] = 2
+                
+        # Convert SOS list
+        # GUI SOS: [ ((7, 7), (6, 7), (5, 7)), ... ]
+        # Logic SOS: set of tuples
+        sos_set = set(current_sos)
+        
+        # Scores dict { 'P1': x, 'Bot': y } -> { 0: x, 1: y }
+        # GUI: P1=0, Bot=1 (Implied)
+        scores_logic = { 0: current_scores['P1'], 1: current_scores['Bot'] }
+        
+        state = {
+            'board': board_np,
+            'scores': scores_logic,
+            'current_player': current_player_idx,
+            'sos_patterns': sos_set
+        }
+        
+        # Get Probs
+        probs = self.mcts.get_probs(state, temperature=0) # Deterministic for play
+        action = np.argmax(probs)
+        
+        # Convert Action to ((r,c), letter)
+        is_o = action >= 64
+        idx = action - 64 if is_o else action
+        r = idx // 8
+        c = idx % 8
+        letter = 'O' if is_o else 'S'
+        
+        return (r, c), letter
+
 
 # -----------------------
 # Constants / Setup
@@ -89,9 +218,62 @@ for i in range(no_of_cells):
 label = pyglet.text.Label('', font_name='Arial',
                           font_size=20, x=10, y=window.height - 30)
 
-# scores and bot
+# scores and bots
+
+# scores and bots
 scores = {'P1': 0, 'Bot': 0}
-bot = SOSBot()   # your sos_bot.py; simple greedy/random bot
+greedy_bot = SOSBot()
+alpha_bot = AlphaBot()
+
+# Bot Selection State
+class BotType(Enum):
+    GREEDY = 0
+    ALPHA = 1
+
+current_bot_type = BotType.GREEDY
+
+# UI for Bot Selection
+bot_select_label = pyglet.text.Label('Select Bot:', font_name='Arial', font_size=20,
+                                     x=window.width//2, y=window.height//2 - 80,
+                                     anchor_x='center', anchor_y='center', batch=home_batch)
+
+greedy_btn = shapes.Rectangle(window.width//2 - 150, window.height//2 - 130, 140, 40, color=(100, 100, 100), batch=home_batch)
+greedy_btn_label = pyglet.text.Label('Greedy', font_name='Arial', font_size=18,
+                                     x=greedy_btn.x + 70, y=greedy_btn.y + 20,
+                                     anchor_x='center', anchor_y='center', batch=home_batch)
+
+alpha_btn = shapes.Rectangle(window.width//2 + 10, window.height//2 - 130, 140, 40, color=(100, 100, 100), batch=home_batch)
+alpha_btn_label = pyglet.text.Label('AlphaZero', font_name='Arial', font_size=18,
+                                    x=alpha_btn.x + 70, y=alpha_btn.y + 20,
+                                    anchor_x='center', anchor_y='center', batch=home_batch)
+
+# Wrap Around Selection
+wrap_around_enabled = True
+wrap_btn = shapes.Rectangle(window.width//2 - 70, window.height//2 - 200, 140, 40, color=(0, 200, 0), batch=home_batch)
+wrap_btn_label = pyglet.text.Label('Wrap: ON', font_name='Arial', font_size=18,
+                                   x=wrap_btn.x + 70, y=wrap_btn.y + 20,
+                                   anchor_x='center', anchor_y='center', batch=home_batch)
+
+def update_bot_buttons():
+    # Only updates bot buttons, wrap handled separately or here
+    pass
+
+def update_wrap_button():
+    if wrap_around_enabled:
+        wrap_btn.color = (0, 200, 0)
+        wrap_btn_label.text = "Wrap: ON"
+    else:
+        wrap_btn.color = (100, 100, 100)
+        wrap_btn_label.text = "Wrap: OFF"
+    if current_bot_type == BotType.GREEDY:
+        greedy_btn.color = (0, 200, 0) # Green for selected
+        alpha_btn.color = (100, 100, 100) # Grey
+    else:
+        greedy_btn.color = (100, 100, 100)
+        alpha_btn.color = (0, 200, 0)
+        
+update_bot_buttons()
+
 
 # -----------------------
 # Helpers
@@ -208,6 +390,9 @@ def check_win():
             is_wrapped_sos = (o_orig_r != o_r or o_orig_c != o_c) or \
                              (s2_orig_r != s2_r or s2_orig_c != s2_c)
 
+            if not wrap_around_enabled and is_wrapped_sos:
+                return None, None, False
+
             return raw_coords, sorted_coords, is_wrapped_sos
         return None, None, False
 
@@ -239,7 +424,22 @@ def check_win():
 def bot_turn():
     global bot_moves_queue, current_player
 
-    move, letter = bot.choose_move(board)
+    
+    # Select Bot Logic
+    move, letter = None, None
+    
+    if current_bot_type == BotType.ALPHA:
+         # Try AlphaZero
+         result = alpha_bot.choose_move_wrapper(board, SOS, scores, 1) # 1 is Bot Index
+         if result:
+             move, letter = result
+         else:
+             print("AlphaBot failed (no model?), falling back to Greedy")
+             move, letter = greedy_bot.choose_move(board)
+    else:
+         # Greedy
+         move, letter = greedy_bot.choose_move(board)
+
     bot_moves_queue.append((move, letter))
 
     # Switch current_player to bot
@@ -261,7 +461,15 @@ def execute_bot_move(dt):
 
         if scored and not is_board_full():
             # Schedule next move if bot scored again
-            next_move, next_letter = bot.choose_move(board)
+            # Schedule next move if bot scored again
+            result = None
+            if current_bot_type == BotType.ALPHA:
+                result = alpha_bot.choose_move_wrapper(board, SOS, scores, 1)
+            
+            if result:
+                 next_move, next_letter = result
+            else:
+                 next_move, next_letter = greedy_bot.choose_move(board)
             bot_moves_queue.append((next_move, next_letter))
             pyglet.clock.schedule_once(execute_bot_move, 1.0)
         else:
@@ -284,13 +492,37 @@ def end_game():
 
 @window.event
 def on_mouse_press(x, y, button, modifiers):
-    global game_state, selected_cell, hc
+    global game_state, selected_cell, hc, current_bot_type, wrap_around_enabled
     # Start button on home screen
     if game_state == GameState.HOME:
+        # Start Game
         if start_button.x <= x <= start_button.x + start_button.width and \
            start_button.y <= y <= start_button.y + start_button.height:
             game_state = GameState.PLAYING
+            
+            # Sync Rules to Bots
+            GameWrapper.WRAP_AROUND = wrap_around_enabled
+            greedy_bot.wrap_around = wrap_around_enabled
+            
             update_label()
+            
+        # Bot Selection
+        elif greedy_btn.x <= x <= greedy_btn.x + greedy_btn.width and \
+             greedy_btn.y <= y <= greedy_btn.y + greedy_btn.height:
+             current_bot_type = BotType.GREEDY
+             update_bot_buttons()
+             
+        elif alpha_btn.x <= x <= alpha_btn.x + alpha_btn.width and \
+             alpha_btn.y <= y <= alpha_btn.y + alpha_btn.height:
+             current_bot_type = BotType.ALPHA
+             update_bot_buttons()
+             
+        # Wrap Toggle
+        elif wrap_btn.x <= x <= wrap_btn.x + wrap_btn.width and \
+             wrap_btn.y <= y <= wrap_btn.y + wrap_btn.height:
+             wrap_around_enabled = not wrap_around_enabled
+             update_wrap_button()
+
     elif game_state == GameState.PLAYING:
         if gridX <= x <= gridX + cellSize and gridY <= y <= gridY + cellSize:
             cols = int((x - gridX) // (grid_size + space))
@@ -335,6 +567,13 @@ def on_draw():
     if game_state == GameState.HOME:
         background.blit(0, 0, width=window.width, height=window.height)
         home_batch.draw()
+        
+        # Draw Bot Buttons (rendered in home_batch but explicit call ensures layering if needed)
+        # Actually home_batch.draw() already draws them if they are added to batch.
+        # But we need to ensure label color updates or redraws happening?
+        # Pyglet batches handle this.
+        # Just checking if we missed anything.
+        pass 
     elif game_state == GameState.PLAYING:
         background.blit(0, 0, width=window.width, height=window.height)
         batch.draw()
