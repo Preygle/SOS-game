@@ -22,7 +22,11 @@ class AlphaBot:
         
         if os.path.exists(model_path):
             try:
-                self.model.load_state_dict(torch.load(model_path, map_location=self.device))
+                checkpoint = torch.load(model_path, map_location=self.device)
+                if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+                     self.model.load_state_dict(checkpoint['model_state_dict'])
+                else:
+                     self.model.load_state_dict(checkpoint)
                 self.model.eval()
                 self.model_loaded = True
                 print(f"AlphaZero model loaded from {model_path}")

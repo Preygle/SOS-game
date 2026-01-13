@@ -7,6 +7,7 @@ import os
 import copy
 import json
 import time
+import argparse
 from collections import deque
 
 from models import AlphaZeroResNet
@@ -34,8 +35,19 @@ ARGS = {
 }
 
 def train():
+    parser = argparse.ArgumentParser(description='AlphaZero Training')
+    parser.add_argument('--scratch', action='store_true', help='Restart training from scratch')
+    args = parser.parse_args()
+
     if not os.path.exists(ARGS['checkpoint_dir']): os.makedirs(ARGS['checkpoint_dir'])
     if not os.path.exists(ARGS['replay_dir']): os.makedirs(ARGS['replay_dir'])
+    
+    # Handle Scratch: clear checkpoints
+    if args.scratch:
+        print("Scrubbing checkpoints for fresh start...")
+        for f in os.listdir(ARGS['checkpoint_dir']):
+            if f.startswith("model_") and f.endswith(".pth") or f == 'best.pth':
+                os.remove(os.path.join(ARGS['checkpoint_dir'], f))
     
     # Init Model
     # Input channels: 6 (S, O, Empty, Player, Score0, Score1)
@@ -44,14 +56,24 @@ def train():
     
     # Check for existing checkpoint
     start_iter = 0
-    checkpoint_files = [f for f in os.listdir(ARGS['checkpoint_dir']) if f.startswith('model_') and f.endswith('.pth')]
-    if checkpoint_files:
-        # Sort by iteration number
-        checkpoint_files.sort(key=lambda x: int(x.split('_')[1].split('.')[0]))
-        latest_checkpoint = checkpoint_files[-1]
-        start_iter = int(latest_checkpoint.split('_')[1].split('.')[0])
-        print(f"Resuming from checkpoint: {latest_checkpoint} (Iter {start_iter})")
-        nnet.load_state_dict(torch.load(os.path.join(ARGS['checkpoint_dir'], latest_checkpoint), map_location=ARGS['device']))
+    if not args.scratch:
+        checkpoint_files = [f for f in os.listdir(ARGS['checkpoint_dir']) if f.startswith('model_') and f.endswith('.pth')]
+        if checkpoint_files:
+            # Sort by iteration number
+            checkpoint_files.sort(key=lambda x: int(x.split('_')[1].split('.')[0]))
+            latest_checkpoint = checkpoint_files[-1]
+            start_iter = int(latest_checkpoint.split('_')[1].split('.')[0])
+            print(f"Resuming from checkpoint: {latest_checkpoint} (Next Iter {start_iter + 1})")
+            checkpoint_path = os.path.join(ARGS['checkpoint_dir'], latest_checkpoint)
+            checkpoint = torch.load(checkpoint_path, map_location=ARGS['device'])
+            
+            # Support both direct state_dict (legacy) and full dict (new)
+            if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+                nnet.load_state_dict(checkpoint['model_state_dict'])
+                if 'optimizer_state_dict' in checkpoint:
+                    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            else:
+                nnet.load_state_dict(checkpoint) # Legacy fallback
     
     # Init MCTS
     mcts = AlphaMCTS(nnet, GameWrapper, ARGS)
@@ -67,6 +89,7 @@ def train():
 
     print(f"Starting training on {ARGS['device']}...")
     
+
     for i in range(start_iter, ARGS['iterations']):
         print(f"--- Iteration {i+1}/{ARGS['iterations']} ---")
         
@@ -83,16 +106,13 @@ def train():
             
             while not game.is_finished():
                 state = game.get_state()
-                # Temp usually 1 for first X moves, then 0. 
                 temp = 1 if len(game_history) < 10 else 0
                 
                 # Get MCTS Probs
-                # Note: MCTS needs to be fresh or reused? 
-                # AlphaMCTS.get_probs creates fresh tree.
                 probs = mcts.get_probs(state, temperature=temp)
                 
                 # Store
-                sym = GameWrapper.encode_state(state) # We could augment symmetries here!
+                sym = GameWrapper.encode_state(state)
                 game_history.append([sym, probs, game.current_player])
                 
                 # Pick Action
@@ -110,13 +130,7 @@ def train():
             winner = game.get_winner() # 0, 1, 2
             
             # Assign rewards
-            # If winner is 1, P1 gets +1, P2 gets -1.
-            # History stores 'current_player'.
-            # If current_player was 0 (P1), and winner is 1 -> +1.
             for hist in game_history:
-                # hist[2] is player who MOVED to create next state? 
-                # Encoded state is BEFORE move. Player in state is 'current_player'.
-                # So if history[2] == 0 (P1), and Winner == 1 (P1) -> +1
                 p = hist[2]
                 if winner == 0:
                     v = 0
@@ -148,7 +162,6 @@ def train():
         
         if len(replay_buffer) > ARGS['batch_size']:
              # Train for K epochs
-             # Convert entire buffer to tensors first? Too big. Sample.
              for _ in range(ARGS['epochs'] * (len(iteration_examples) // ARGS['batch_size'] + 1)):
                  batch = random.sample(replay_buffer, ARGS['batch_size'])
                  states, pis, vs = zip(*batch)
@@ -160,8 +173,6 @@ def train():
                  out_pi, out_v = nnet(states)
                  
                  # Loss
-                 # Pi: Cross Entropy or KL. Usually -sum(target * log(pred))
-                 # Out_pi is logits.
                  l_pi = -torch.mean(torch.sum(pis * F.log_softmax(out_pi, dim=1), dim=1))
                  
                  # V: MSE
@@ -186,12 +197,22 @@ def train():
         with open(ARGS['log_file'], 'a') as f:
             f.write(f"{i},{avg_pi},{avg_v},{avg_pi+avg_v},0,{avg_moves}\n")
             
-        # Checkpoint
-        if (i+1) % 10 == 0:
-            torch.save(nnet.state_dict(), os.path.join(ARGS['checkpoint_dir'], f'model_{i+1}.pth'))
+        # Checkpoint (Save every iteration to assume resume capability)
+        if True: # (i+1) % 1 == 0
+            checkpoint_state = {
+                'iteration': i + 1,
+                'model_state_dict': nnet.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+            }
+            torch.save(checkpoint_state, os.path.join(ARGS['checkpoint_dir'], f'model_{i+1}.pth'))
             
     # Save Final
-    torch.save(nnet.state_dict(), os.path.join(ARGS['checkpoint_dir'], 'best.pth'))
+    final_state = {
+        'iteration': ARGS['iterations'],
+        'model_state_dict': nnet.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+    }
+    torch.save(final_state, os.path.join(ARGS['checkpoint_dir'], 'best.pth'))
     print("Training Complete.")
 
 if __name__ == "__main__":
