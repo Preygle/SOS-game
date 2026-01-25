@@ -1,5 +1,5 @@
 import pyglet
-from pyglet import shapes
+from pyglet import shapes, font
 from pyglet.window import key
 from enum import Enum
 import random
@@ -29,7 +29,7 @@ class AlphaBot:
 # ==========================================
 
 class Button:
-    def __init__(self, x, y, width, height, text, batch, group, img_normal, callback=None, font_size=18):
+    def __init__(self, x, y, width, height, text, batch, group, img_normal, img_pressed, callback=None, font_size=18, overlay=None):
         self.x = x
         self.y = y
         self.width = width
@@ -42,13 +42,22 @@ class Button:
         self.sprite.scale_y = height / img_normal.height
         
         self.img_normal = img_normal
+        self.img_pressed = img_pressed
         
+        self.overlay_sprite = None
+        if overlay:
+             self.overlay_sprite = pyglet.sprite.Sprite(overlay, x=x, y=y, batch=batch, group=pyglet.graphics.Group(order=group.order+1))
+             self.overlay_sprite.scale_x = width / overlay.width
+             self.overlay_sprite.scale_y = height / overlay.height
+
         # Center text
-        self.label = pyglet.text.Label(text, font_name='Arial', font_size=font_size,
-                                       x=x + width//2, y=y + height//2,
-                                       anchor_x='center', anchor_y='center',
-                                       color=(255, 255, 255, 255),
-                                       batch=batch, group=pyglet.graphics.Group(order=group.order+1))
+        self.label = None
+        if text:
+            self.label = pyglet.text.Label(text, font_name=custom_font, font_size=font_size,
+                                           x=x + width//2, y=y + height//2,
+                                           anchor_x='center', anchor_y='center',
+                                           color=(255, 255, 255, 255),
+                                           batch=batch, group=pyglet.graphics.Group(order=group.order+2))
 
     def check_hit(self, x, y):
         return self.x <= x <= self.x + self.width and self.y <= y <= self.y + self.height
@@ -56,12 +65,14 @@ class Button:
     def on_mouse_press(self, x, y, button, modifiers):
         if self.check_hit(x, y):
             self.is_pressed = True
+            self.sprite.image = self.img_pressed
             return True
         return False
 
     def on_mouse_release(self, x, y, button, modifiers):
         if self.is_pressed:
             self.is_pressed = False
+            self.sprite.image = self.img_normal
             if self.check_hit(x, y) and self.callback:
                 self.callback()
             return True
@@ -115,11 +126,25 @@ alpha_bot = AlphaBot()
 pyglet.resource.path = ['assets']
 pyglet.resource.reindex()
 
+# Load Font
+font.add_file('assets/PressStart2P-Regular.ttf')
+custom_font = 'Press Start 2P'
+
 # Images
 bg_img = pyglet.resource.image('background.png')
 title_img = pyglet.resource.image('title.png')
 btn_img = pyglet.resource.image('button.png')
+btn_press_img = pyglet.resource.image('button_pressed.png')
 panel_img = pyglet.resource.image('panel.png')
+
+pvp_img = pyglet.resource.image('pvp.png')
+pve_img = pyglet.resource.image('pve.png')
+exit_img = pyglet.resource.image('exit.png') 
+greedy_img = pyglet.resource.image('greedy.png')
+alphago_img = pyglet.resource.image('alphago.png')
+orbit_img = pyglet.resource.image('orbit.png')
+start_img = pyglet.resource.image('start.png')
+back_img = pyglet.resource.image('back.png') 
 
 cell_bg = pyglet.resource.image('cell.png')
 cell_sel = pyglet.resource.image('cell_selected.png')
@@ -166,10 +191,11 @@ def setup_home():
     
     # Title
     t_w = 600
-    t_h = 200
-    title_sprite = pyglet.sprite.Sprite(title_img, x=window.width//2 - t_w//2, y=window.height - 250, batch=main_batch, group=ui_group)
-    title_sprite.scale_x = t_w / title_img.width
-    title_sprite.scale_y = t_h / title_img.height
+    scale = t_w / title_img.width
+    t_h = title_img.height * scale
+    
+    title_sprite = pyglet.sprite.Sprite(title_img, x=window.width//2 - t_w//2, y=window.height - 380, batch=main_batch, group=ui_group)
+    title_sprite.scale = scale
     sprites.append(title_sprite)
     
     # 1 vs 1 Button
@@ -177,15 +203,15 @@ def setup_home():
     cx = window.width // 2
     cy = window.height // 2
     
-    b1 = Button(cx - btn_w//2, cy, btn_w, btn_h, "1 vs 1 (PvP)", main_batch, ui_group, btn_img, start_pvp)
+    b1 = Button(cx - btn_w//2, cy, btn_w, btn_h, "", main_batch, ui_group, btn_img, btn_press_img, start_pvp, overlay=pvp_img)
     buttons.append(b1)
     
     # 1 vs Bot Button
-    b2 = Button(cx - btn_w//2, cy - 100, btn_w, btn_h, "1 vs Bot", main_batch, ui_group, btn_img, show_bot_settings)
+    b2 = Button(cx - btn_w//2, cy - 100, btn_w, btn_h, "", main_batch, ui_group, btn_img, btn_press_img, show_bot_settings, overlay=pve_img)
     buttons.append(b2)
     
     # Exit
-    b3 = Button(cx - btn_w//2, cy - 200, btn_w, btn_h, "Exit", main_batch, ui_group, btn_img, window.close)
+    b3 = Button(cx - btn_w//2, cy - 200, btn_w, btn_h, "", main_batch, ui_group, btn_img, btn_press_img, window.close, overlay=exit_img)
     buttons.append(b3)
 
 def setup_bot_settings():
@@ -200,7 +226,7 @@ def setup_bot_settings():
     sprites.append(panel)
     
     # Title
-    lbl = pyglet.text.Label("Bot Settings", font_name='Arial', font_size=36,
+    lbl = pyglet.text.Label("Bot Settings", font_name=custom_font, font_size=36,
                             x=window.width//2, y=py + ph - 60, anchor_x='center', batch=main_batch, group=text_group)
     sprites.append(lbl) 
     
@@ -222,8 +248,8 @@ def setup_bot_settings():
     bg_g = btn_img
     bg_a = btn_img
     
-    b_greedy = Button(bx, by, btn_w, 60, "Greedy Bot", main_batch, text_group, bg_g, set_greedy)
-    b_alpha = Button(window.width//2 + 20, by, btn_w, 60, "AlphaZero", main_batch, text_group, bg_a, set_alpha)
+    b_greedy = Button(bx, by, btn_w, 60, "", main_batch, text_group, bg_g, btn_press_img, set_greedy, overlay=greedy_img)
+    b_alpha = Button(window.width//2 + 20, by, btn_w, 60, "", main_batch, text_group, bg_a, btn_press_img, set_alpha, overlay=alphago_img)
     buttons.extend([b_greedy, b_alpha])
     
     # Wrap Toggle
@@ -232,17 +258,17 @@ def setup_bot_settings():
         wrap_around = not wrap_around
         setup_bot_settings()
         
-    w_text = f"Wrap Around: {'ON' if wrap_around else 'OFF'}"
+    w_text = "ON" if wrap_around else "OFF"
     bg_w = btn_img
-    b_wrap = Button(window.width//2 - btn_w//2, py + 200, btn_w, 60, w_text, main_batch, text_group, bg_w, toggle_wrap)
+    b_wrap = Button(window.width//2 - btn_w//2, py + 200, btn_w, 60, w_text, main_batch, text_group, bg_w, btn_press_img, toggle_wrap, overlay=orbit_img)
     buttons.append(b_wrap)
     
     # Start
-    b_start = Button(window.width//2 - btn_w//2, py + 80, btn_w, 80, "START GAME", main_batch, text_group, btn_img, start_pve)
+    b_start = Button(window.width//2 - btn_w//2, py + 80, btn_w, 80, "", main_batch, text_group, btn_img, btn_press_img, start_pve, overlay=start_img)
     buttons.append(b_start)
     
     # Back
-    b_back = Button(window.width//2 - btn_w//2, py - 100, btn_w, 50, "Back", main_batch, text_group, btn_img, return_home)
+    b_back = Button(window.width//2 - btn_w//2, py - 100, btn_w, 50, "", main_batch, text_group, btn_img, btn_press_img, return_home, overlay=back_img)
     buttons.append(b_back)
 
 def return_home():
@@ -300,7 +326,7 @@ def start_game():
             grid_sprites.append(s)
             
     # Back Button
-    b_back = Button(20, window.height - 80, 120, 50, "Menu", main_batch, ui_group, btn_img, return_home)
+    b_back = Button(20, window.height - 80, 120, 50, "", main_batch, ui_group, btn_img, btn_press_img, return_home, overlay=back_img)
     buttons.append(b_back)
 
 # ==========================================
@@ -493,21 +519,21 @@ def on_draw():
         p2_score = scores[players[1]]
         top_y = window.height - 50
         
-        pyglet.text.Label(f"{players[0]}: {p1_score}", font_name='Arial', font_size=24, color=(0, 183, 239, 255),
+        pyglet.text.Label(f"{players[0]}: {p1_score}", font_name=custom_font, font_size=24, color=(0, 183, 239, 255),
                           x=window.width//4, y=top_y, anchor_x='center').draw()
                           
-        pyglet.text.Label(f"{players[1]}: {p2_score}", font_name='Arial', font_size=24, color=(237, 28, 36, 255),
+        pyglet.text.Label(f"{players[1]}: {p2_score}", font_name=custom_font, font_size=24, color=(237, 28, 36, 255),
                           x=3*window.width//4, y=top_y, anchor_x='center').draw()
                           
         if game_state == GameState.GAME_OVER:
-             pyglet.text.Label(f"GAME OVER: {winner_text}", font_name='Arial', font_size=32, 
+             pyglet.text.Label(f"GAME OVER: {winner_text}", font_name=custom_font, font_size=32, 
                               x=window.width//2, y=window.height//2, anchor_x='center', anchor_y='center', color=(255, 255, 0, 255)).draw()
-             pyglet.text.Label("Press ENTER to menu", font_name='Arial', font_size=18, 
+             pyglet.text.Label("Press ENTER to menu", font_name=custom_font, font_size=18, 
                               x=window.width//2, y=window.height//2 - 50, anchor_x='center', anchor_y='center').draw()
         else:
              turn_str = f"{players[current_player]}'s Turn"
              if game_mode == GameMode.PVE and current_player == 1: turn_str = "Bot Thinking..."
-             pyglet.text.Label(turn_str, font_name='Arial', font_size=24,
+             pyglet.text.Label(turn_str, font_name=custom_font, font_size=24,
                                x=window.width//2, y=top_y, anchor_x='center').draw()
 
 # Init
