@@ -3,6 +3,7 @@ from pyglet import shapes, font
 from pyglet.window import key
 from enum import Enum
 import random
+import math
 import torch
 import numpy as np
 import os
@@ -29,7 +30,7 @@ class AlphaBot:
 # ==========================================
 
 class Button:
-    def __init__(self, x, y, width, height, text, batch, group, img_normal, img_pressed, callback=None, font_size=18, overlay=None):
+    def __init__(self, x, y, width, height, text, batch, group, img_normal, callback=None, font_size=18, overlay=None):
         self.x = x
         self.y = y
         self.width = width
@@ -42,7 +43,6 @@ class Button:
         self.sprite.scale_y = height / img_normal.height
         
         self.img_normal = img_normal
-        self.img_pressed = img_pressed
         
         self.overlay_sprite = None
         if overlay:
@@ -62,21 +62,52 @@ class Button:
     def check_hit(self, x, y):
         return self.x <= x <= self.x + self.width and self.y <= y <= self.y + self.height
 
+    def check_hover(self, x, y):
+        is_hover = self.check_hit(x, y)
+        target_scale = 1.1 if is_hover else 1.0
+        
+        base_sx = self.width / self.img_normal.width
+        base_sy = self.height / self.img_normal.height
+        
+        final_sx = base_sx * target_scale
+        final_sy = base_sy * target_scale
+        
+        self.sprite.scale_x = final_sx
+        self.sprite.scale_y = final_sy
+        
+        # Center adjustment
+        x_shift = (self.width * target_scale - self.width) / 2
+        y_shift = (self.height * target_scale - self.height) / 2
+        
+        self.sprite.x = self.x - x_shift
+        self.sprite.y = self.y - y_shift
+        
+        if self.overlay_sprite:
+            self.overlay_sprite.scale_x = final_sx
+            self.overlay_sprite.scale_y = final_sy
+            self.overlay_sprite.x = self.x - x_shift
+            self.overlay_sprite.y = self.y - y_shift
+
+        return is_hover
+
     def on_mouse_press(self, x, y, button, modifiers):
         if self.check_hit(x, y):
             self.is_pressed = True
-            self.sprite.image = self.img_pressed
             return True
         return False
 
     def on_mouse_release(self, x, y, button, modifiers):
         if self.is_pressed:
             self.is_pressed = False
-            self.sprite.image = self.img_normal
             if self.check_hit(x, y) and self.callback:
                 self.callback()
             return True
         return False
+
+    def delete(self):
+        if self.sprite: self.sprite.delete()
+        if self.overlay_sprite: self.overlay_sprite.delete()
+        if self.label: self.label.delete()
 
 # ==========================================
 # 3. GAME CONSTANTS & STATE
@@ -198,20 +229,47 @@ def setup_home():
     title_sprite.scale = scale
     sprites.append(title_sprite)
     
+    # Store center for animation
+    title_sprite.base_scale = scale
+    title_sprite.base_x = title_sprite.x
+    title_sprite.base_y = title_sprite.y
+    title_sprite.center_x = title_sprite.x + t_w / 2
+    title_sprite.center_y = title_sprite.y + t_h / 2
+    
+    def update_title(dt):
+        if game_state != GameState.HOME: return
+        t = pyglet.clock.tick()
+        if not hasattr(update_title, 'total_time'): update_title.total_time = 0
+        update_title.total_time += dt
+        
+        # Breathing: Scale varies between 1.0 and 1.01 of base
+        factor = 1.0 + 0.01 * math.sin(update_title.total_time * 2.0)
+        new_scale = title_sprite.base_scale * factor
+        
+        title_sprite.scale = new_scale
+        
+        current_w = title_img.width * new_scale
+        current_h = title_img.height * new_scale
+        title_sprite.x = title_sprite.center_x - current_w / 2
+        title_sprite.y = title_sprite.center_y - current_h / 2
+
+    pyglet.clock.schedule_interval(update_title, 1/60.0)
+    scheduled_functions.append(update_title)
+
     # 1 vs 1 Button
     btn_w, btn_h = 300, 80
     cx = window.width // 2
-    cy = window.height // 2
+    cy = window.height // 2 + 50 # Shift up
     
-    b1 = Button(cx - btn_w//2, cy, btn_w, btn_h, "", main_batch, ui_group, btn_img, btn_press_img, start_pvp, overlay=pvp_img)
+    b1 = Button(cx - btn_w//2, cy, btn_w, btn_h, "", main_batch, ui_group, btn_img, start_pvp, overlay=pvp_img)
     buttons.append(b1)
     
-    # 1 vs Bot Button
-    b2 = Button(cx - btn_w//2, cy - 100, btn_w, btn_h, "", main_batch, ui_group, btn_img, btn_press_img, show_bot_settings, overlay=pve_img)
+    # 1 vs Bot Button (Increased gap to 120)
+    b2 = Button(cx - btn_w//2, cy - 120, btn_w, btn_h, "", main_batch, ui_group, btn_img, show_bot_settings, overlay=pve_img)
     buttons.append(b2)
     
-    # Exit
-    b3 = Button(cx - btn_w//2, cy - 200, btn_w, btn_h, "", main_batch, ui_group, btn_img, btn_press_img, window.close, overlay=exit_img)
+    # Exit (Gap 120)
+    b3 = Button(cx - btn_w//2, cy - 240, btn_w, btn_h, "", main_batch, ui_group, btn_img, window.close, overlay=exit_img)
     buttons.append(b3)
 
 def setup_bot_settings():
@@ -248,8 +306,8 @@ def setup_bot_settings():
     bg_g = btn_img
     bg_a = btn_img
     
-    b_greedy = Button(bx, by, btn_w, 60, "", main_batch, text_group, bg_g, btn_press_img, set_greedy, overlay=greedy_img)
-    b_alpha = Button(window.width//2 + 20, by, btn_w, 60, "", main_batch, text_group, bg_a, btn_press_img, set_alpha, overlay=alphago_img)
+    b_greedy = Button(bx, by, btn_w, 60, "", main_batch, text_group, bg_g, set_greedy, overlay=greedy_img)
+    b_alpha = Button(window.width//2 + 20, by, btn_w, 60, "", main_batch, text_group, bg_a, set_alpha, overlay=alphago_img)
     buttons.extend([b_greedy, b_alpha])
     
     # Wrap Toggle
@@ -260,15 +318,15 @@ def setup_bot_settings():
         
     w_text = "ON" if wrap_around else "OFF"
     bg_w = btn_img
-    b_wrap = Button(window.width//2 - btn_w//2, py + 200, btn_w, 60, w_text, main_batch, text_group, bg_w, btn_press_img, toggle_wrap, overlay=orbit_img)
+    b_wrap = Button(window.width//2 - btn_w//2, py + 200, btn_w, 60, w_text, main_batch, text_group, bg_w, toggle_wrap, overlay=orbit_img)
     buttons.append(b_wrap)
     
     # Start
-    b_start = Button(window.width//2 - btn_w//2, py + 80, btn_w, 80, "", main_batch, text_group, btn_img, btn_press_img, start_pve, overlay=start_img)
+    b_start = Button(window.width//2 - btn_w//2, py + 80, btn_w, 80, "", main_batch, text_group, btn_img, start_pve, overlay=start_img)
     buttons.append(b_start)
     
     # Back
-    b_back = Button(window.width//2 - btn_w//2, py - 100, btn_w, 50, "", main_batch, text_group, btn_img, btn_press_img, return_home, overlay=back_img)
+    b_back = Button(window.width//2 - btn_w//2, py - 100, btn_w, 50, "", main_batch, text_group, btn_img, return_home, overlay=back_img)
     buttons.append(b_back)
 
 def return_home():
@@ -298,11 +356,28 @@ def start_pve():
     greedy_bot.wrap_around = wrap_around
     start_game()
 
+scheduled_functions = []
+
 def reset_sprites():
+    for s in sprites:
+        s.delete()
     sprites.clear()
+    
+    for s in grid_sprites:
+        s.delete()
     grid_sprites.clear()
+    
+    for l in lines:
+        l.delete()
     lines.clear()
+    
+    for b in buttons:
+        b.delete()
     buttons.clear()
+    
+    for f in scheduled_functions:
+        pyglet.clock.unschedule(f)
+    scheduled_functions.clear()
 
 def start_game():
     global board, scores, current_player, SOS, hc, selected_cell
@@ -326,7 +401,7 @@ def start_game():
             grid_sprites.append(s)
             
     # Back Button
-    b_back = Button(20, window.height - 80, 120, 50, "", main_batch, ui_group, btn_img, btn_press_img, return_home, overlay=back_img)
+    b_back = Button(20, window.height - 80, 120, 50, "", main_batch, ui_group, btn_img, return_home, overlay=back_img)
     buttons.append(b_back)
 
 # ==========================================
@@ -475,6 +550,11 @@ def on_mouse_press(x, y, button, modifiers):
 def on_mouse_release(x, y, button, modifiers):
     for b in buttons:
         b.on_mouse_release(x, y, button, modifiers)
+
+@window.event
+def on_mouse_motion(x, y, dx, dy):
+    for b in buttons:
+        b.check_hover(x, y)
 
 @window.event
 def on_key_press(symbol, modifiers):
