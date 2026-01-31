@@ -11,12 +11,9 @@ import sys
 
 # Import Bot Logic
 from greedy_bot import SOSBot
-# from models import AlphaZeroResNet
-# from alpha_mcts import AlphaMCTS, GameWrapper
 
-# ==========================================
-# 1. BOT WRAPPER (From sos_bot.py)
-# ==========================================
+
+# BOT WRAPPER (From sos_bot.py)
 
 class AlphaBot:
     def __init__(self, model_path='checkpoints/best.pth'):
@@ -25,22 +22,26 @@ class AlphaBot:
     def choose_move_wrapper(self, board, current_sos, current_scores, current_player_idx):
         return None
 
-# ==========================================
-# 2. UI UTILS & BUTTON CLASS
-# ==========================================
+
+# UI UTILS & BUTTON CLASS
+
 
 class Button:
-    def __init__(self, x, y, width, height, text, batch, group, img_normal, callback=None, font_size=18, overlay=None):
+    def __init__(self, x, y, width, height, text, batch, group, img_normal, callback=None, font_size=18, overlay=None, is_selected=False):
         self.x = x
         self.y = y
         self.width = width
         self.height = height
         self.callback = callback
-        self.is_pressed = False
+        self.is_selected = is_selected
+        
+        # Scale based on image size
+        self.base_scale_x = width / img_normal.width
+        self.base_scale_y = height / img_normal.height
         
         self.sprite = pyglet.sprite.Sprite(img_normal, x=x, y=y, batch=batch, group=group)
-        self.sprite.scale_x = width / img_normal.width
-        self.sprite.scale_y = height / img_normal.height
+        self.sprite.scale_x = self.base_scale_x
+        self.sprite.scale_y = self.base_scale_y
         
         self.img_normal = img_normal
         
@@ -49,6 +50,8 @@ class Button:
              self.overlay_sprite = pyglet.sprite.Sprite(overlay, x=x, y=y, batch=batch, group=pyglet.graphics.Group(order=group.order+1))
              self.overlay_sprite.scale_x = width / overlay.width
              self.overlay_sprite.scale_y = height / overlay.height
+             
+        self.total_time = 0.0
 
         # Center text
         self.label = None
@@ -59,48 +62,63 @@ class Button:
                                            color=(255, 255, 255, 255),
                                            batch=batch, group=pyglet.graphics.Group(order=group.order+2))
 
-    def check_hit(self, x, y):
-        return self.x <= x <= self.x + self.width and self.y <= y <= self.y + self.height
+    def update(self, dt):
+        self.total_time += dt
+        
+        # Pulse animation for selected state
+        base_anim = 1.05 + 0.05 * math.sin(self.total_time * 5.0) if self.is_selected else 1.0
+            
+        hover_anim = 1.1 if hasattr(self, 'is_hovered') and self.is_hovered else 1.0
+        
+        final_scale = 1.0
+        if self.is_selected:
+            final_scale = base_anim
+            if hasattr(self, 'is_hovered') and self.is_hovered:
+                final_scale += 0.05 
+        else:
+            final_scale = hover_anim
 
-    def check_hover(self, x, y):
-        is_hover = self.check_hit(x, y)
-        target_scale = 1.1 if is_hover else 1.0
-        
-        base_sx = self.width / self.img_normal.width
-        base_sy = self.height / self.img_normal.height
-        
-        final_sx = base_sx * target_scale
-        final_sy = base_sy * target_scale
+        # Apply Scale
+        final_sx = self.base_scale_x * final_scale
+        final_sy = self.base_scale_y * final_scale
         
         self.sprite.scale_x = final_sx
         self.sprite.scale_y = final_sy
         
-        # Center adjustment
-        x_shift = (self.width * target_scale - self.width) / 2
-        y_shift = (self.height * target_scale - self.height) / 2
+        # Adjust position to center
+        current_w = self.img_normal.width * final_sx
+        current_h = self.img_normal.height * final_sy
+        
+        x_shift = (current_w - self.width) / 2
+        y_shift = (current_h - self.height) / 2
         
         self.sprite.x = self.x - x_shift
         self.sprite.y = self.y - y_shift
         
         if self.overlay_sprite:
-            self.overlay_sprite.scale_x = final_sx
-            self.overlay_sprite.scale_y = final_sy
-            self.overlay_sprite.x = self.x - x_shift
-            self.overlay_sprite.y = self.y - y_shift
+             o_base_sx = self.width / self.overlay_sprite.image.width
+             o_base_sy = self.height / self.overlay_sprite.image.height
+             
+             self.overlay_sprite.scale_x = o_base_sx * final_scale
+             self.overlay_sprite.scale_y = o_base_sy * final_scale
+             self.overlay_sprite.x = self.x - x_shift
+             self.overlay_sprite.y = self.y - y_shift
+        
+    def check_hit(self, x, y):
+        return self.x <= x <= self.x + self.width and self.y <= y <= self.y + self.height
 
-        return is_hover
+    def check_hover(self, x, y):
+        self.is_hovered = self.check_hit(x, y)
+        return self.is_hovered
 
     def on_mouse_press(self, x, y, button, modifiers):
         if self.check_hit(x, y):
-            self.is_pressed = True
             return True
         return False
 
     def on_mouse_release(self, x, y, button, modifiers):
-        if self.is_pressed:
-            self.is_pressed = False
-            if self.check_hit(x, y) and self.callback:
-                self.callback()
+        if self.check_hit(x, y) and self.callback:
+            self.callback()
             return True
         return False
 
@@ -109,9 +127,9 @@ class Button:
         if self.overlay_sprite: self.overlay_sprite.delete()
         if self.label: self.label.delete()
 
-# ==========================================
-# 3. GAME CONSTANTS & STATE
-# ==========================================
+
+# GAME CONSTANTS & STATE
+
 
 class GameState(Enum):
     HOME = 0
@@ -146,13 +164,15 @@ SOS = []
 hc = None 
 selected_cell = None
 winner_text = ""
+last_move_pos = None # Stores (r, c)
+last_move_sprite = None
 
 greedy_bot = SOSBot(wrap_around=True)
 alpha_bot = AlphaBot()
 
-# ==========================================
-# 4. RESOURCES & BATCHES
-# ==========================================
+
+# RESOURCES & BATCHES
+
 
 pyglet.resource.path = ['assets']
 pyglet.resource.reindex()
@@ -165,8 +185,6 @@ custom_font = 'Press Start 2P'
 bg_img = pyglet.resource.image('background.png')
 title_img = pyglet.resource.image('title.png')
 btn_img = pyglet.resource.image('button.png')
-btn_press_img = pyglet.resource.image('button_pressed.png')
-panel_img = pyglet.resource.image('panel.png')
 
 pvp_img = pyglet.resource.image('pvp.png')
 pve_img = pyglet.resource.image('pve.png')
@@ -179,17 +197,18 @@ back_img = pyglet.resource.image('back.png')
 
 cell_bg = pyglet.resource.image('cell.png')
 cell_sel = pyglet.resource.image('cell_selected.png')
+last_move_img = pyglet.resource.image('last_move.png')
 img_s = pyglet.resource.image('s.png')
 img_o = pyglet.resource.image('o.png')
 
-# Batches & Groups
+# Batches
 main_batch = pyglet.graphics.Batch()
-bg_group = pyglet.graphics.Group(0)
-board_back_group = pyglet.graphics.Group(1)
-board_main_group = pyglet.graphics.Group(2) 
-ui_group = pyglet.graphics.Group(3)         
-panel_group = pyglet.graphics.Group(4)      
-text_group = pyglet.graphics.Group(5)
+bg_group = pyglet.graphics.Group(order=0)
+board_back_group = pyglet.graphics.Group(order=1)
+highlight_group = pyglet.graphics.Group(order=2)
+board_main_group = pyglet.graphics.Group(order=3) 
+ui_group = pyglet.graphics.Group(order=4)         
+text_group = pyglet.graphics.Group(order=6)
 
 # Board Dimensions
 no_of_cells = 8 
@@ -209,14 +228,56 @@ sprites = []
 grid_sprites = [] 
 lines = []       
 buttons = []     
+scheduled_functions = [] 
+orbit_dots = []
+active_lines = []
+history_lines = []
 
-# ==========================================
-# 5. UI SCENES
-# ==========================================
+# UI SCENES
+
+
+import time # Needed for animation
 
 def clear_ui():
     buttons.clear()
 
+def update_ui(dt):
+    for b in buttons:
+        b.update(dt)
+        
+def update_effects(dt):
+    if game_state != GameState.PLAYING and game_state != GameState.GAME_OVER: return
+    
+    t = pyglet.clock.tick()
+    if not hasattr(update_effects, 'total_time'): update_effects.total_time = 0
+    update_effects.total_time += dt
+    
+    # Pulse active lines (Opacity 150-250, Width Line+0..3)
+    alpha = 200 + 55 * math.sin(update_effects.total_time * 5.0)
+    thick_add = 1.5 + 1.5 * math.sin(update_effects.total_time * 5.0)
+    
+    for l in active_lines:
+        l.opacity = int(alpha)
+        l.width = line_thickness + thick_add
+
+def recalc_history_opacity():
+    # Gradual fade for older lines (Oldest -> Newest)
+    
+    total = len(history_lines)
+    if total == 0: return
+    
+    min_op = 40
+    max_op = 160
+    
+    for i, group in enumerate(history_lines):
+        # Fraction 0..1
+        frac = (i + 1) / total
+        op = min_op + (max_op - min_op) * frac
+        
+        for l in group:
+            l.opacity = int(op)
+            l.width = line_thickness # Reset Pulse
+            
 def setup_home():
     clear_ui()
     
@@ -229,7 +290,7 @@ def setup_home():
     title_sprite.scale = scale
     sprites.append(title_sprite)
     
-    # Store center for animation
+    # Center logic for animation
     title_sprite.base_scale = scale
     title_sprite.base_x = title_sprite.x
     title_sprite.base_y = title_sprite.y
@@ -242,7 +303,7 @@ def setup_home():
         if not hasattr(update_title, 'total_time'): update_title.total_time = 0
         update_title.total_time += dt
         
-        # Breathing: Scale varies between 1.0 and 1.01 of base
+        # Breathing animation
         factor = 1.0 + 0.01 * math.sin(update_title.total_time * 2.0)
         new_scale = title_sprite.base_scale * factor
         
@@ -261,31 +322,52 @@ def setup_home():
     cx = window.width // 2
     cy = window.height // 2 + 50 # Shift up
     
-    b1 = Button(cx - btn_w//2, cy, btn_w, btn_h, "", main_batch, ui_group, btn_img, start_pvp, overlay=pvp_img)
+    b1 = Button(cx - btn_w//2, cy, btn_w, btn_h, "", main_batch, ui_group, btn_img, show_pvp_settings, overlay=pvp_img)
     buttons.append(b1)
     
     # 1 vs Bot Button (Increased gap to 120)
     b2 = Button(cx - btn_w//2, cy - 120, btn_w, btn_h, "", main_batch, ui_group, btn_img, show_bot_settings, overlay=pve_img)
     buttons.append(b2)
     
-    # Exit (Gap 120)
+    # Exit
     b3 = Button(cx - btn_w//2, cy - 240, btn_w, btn_h, "", main_batch, ui_group, btn_img, window.close, overlay=exit_img)
     buttons.append(b3)
 
+def setup_pvp_settings():
+    clear_ui()
+    py = window.height//2 - 250
+    
+    # Title
+    lbl = pyglet.text.Label("PVP Settings", font_name=custom_font, font_size=36,
+                            x=window.width//2, y=py + 500 - 60, anchor_x='center', batch=main_batch, group=text_group)
+    sprites.append(lbl)
+
+    # Wrap Toggle
+    def toggle_wrap():
+        global wrap_around
+        wrap_around = not wrap_around
+        setup_pvp_settings()
+        
+    btn_w = 200
+    bg_w = btn_img
+    b_wrap = Button(window.width//2 - btn_w//2, py + 250, btn_w, 60, "", main_batch, text_group, bg_w, toggle_wrap, overlay=orbit_img, is_selected=wrap_around)
+    buttons.append(b_wrap)
+    
+    # Start
+    b_start = Button(window.width//2 - btn_w//2, py + 120, btn_w, 80, "", main_batch, text_group, btn_img, start_pvp, overlay=start_img)
+    buttons.append(b_start)
+    
+    # Back
+    b_back = Button(window.width//2 - btn_w//2, py - 60, btn_w, 50, "", main_batch, text_group, btn_img, return_home, overlay=back_img)
+    buttons.append(b_back)
+
 def setup_bot_settings():
     clear_ui()
-    # Panel Background
-    pw, ph = 600, 500
-    px, py = window.width//2 - pw//2, window.height//2 - ph//2
-    
-    panel = pyglet.sprite.Sprite(panel_img, x=px, y=py, batch=main_batch, group=panel_group)
-    panel.scale_x = pw / panel_img.width
-    panel.scale_y = ph / panel_img.height
-    sprites.append(panel)
+    py = window.height//2 - 250
     
     # Title
     lbl = pyglet.text.Label("Bot Settings", font_name=custom_font, font_size=36,
-                            x=window.width//2, y=py + ph - 60, anchor_x='center', batch=main_batch, group=text_group)
+                            x=window.width//2, y=py + 500 - 60, anchor_x='center', batch=main_batch, group=text_group)
     sprites.append(lbl) 
     
     # Bot Type 
@@ -306,8 +388,8 @@ def setup_bot_settings():
     bg_g = btn_img
     bg_a = btn_img
     
-    b_greedy = Button(bx, by, btn_w, 60, "", main_batch, text_group, bg_g, set_greedy, overlay=greedy_img)
-    b_alpha = Button(window.width//2 + 20, by, btn_w, 60, "", main_batch, text_group, bg_a, set_alpha, overlay=alphago_img)
+    b_greedy = Button(bx, by, btn_w, 60, "", main_batch, text_group, bg_g, set_greedy, overlay=greedy_img, is_selected=(bot_type == BotType.GREEDY))
+    b_alpha = Button(window.width//2 + 20, by, btn_w, 60, "", main_batch, text_group, bg_a, set_alpha, overlay=alphago_img, is_selected=(bot_type == BotType.ALPHA))
     buttons.extend([b_greedy, b_alpha])
     
     # Wrap Toggle
@@ -316,9 +398,9 @@ def setup_bot_settings():
         wrap_around = not wrap_around
         setup_bot_settings()
         
-    w_text = "ON" if wrap_around else "OFF"
+    # Wrap Toggle
     bg_w = btn_img
-    b_wrap = Button(window.width//2 - btn_w//2, py + 200, btn_w, 60, w_text, main_batch, text_group, bg_w, toggle_wrap, overlay=orbit_img)
+    b_wrap = Button(window.width//2 - btn_w//2, py + 200, btn_w, 60, "", main_batch, text_group, bg_w, toggle_wrap, overlay=orbit_img, is_selected=wrap_around)
     buttons.append(b_wrap)
     
     # Start
@@ -335,6 +417,12 @@ def return_home():
     reset_sprites()
     setup_home()
 
+def show_pvp_settings():
+    global game_state
+    game_state = GameState.SETTINGS_POPUP
+    reset_sprites()
+    setup_pvp_settings()
+    
 def show_bot_settings():
     global game_state
     game_state = GameState.SETTINGS_POPUP
@@ -356,9 +444,8 @@ def start_pve():
     greedy_bot.wrap_around = wrap_around
     start_game()
 
-scheduled_functions = []
-
 def reset_sprites():
+    global last_move_sprite
     for s in sprites:
         s.delete()
     sprites.clear()
@@ -375,12 +462,62 @@ def reset_sprites():
         b.delete()
     buttons.clear()
     
+    if last_move_sprite:
+        last_move_sprite.delete()
+        last_move_sprite = None
+        
+    for d in orbit_dots:
+        d.delete()
+    orbit_dots.clear()
+    
+    active_lines.clear()
+    history_lines.clear()
+    
     for f in scheduled_functions:
         pyglet.clock.unschedule(f)
     scheduled_functions.clear()
 
+def create_orbit_dots():
+    if not wrap_around: return 
+    
+    dot_radius = 5
+    color = (255, 255, 255)
+    
+    # Margins are roughly gridX - space, gridY - space
+    def add_dot(x, y):
+        d = shapes.Circle(x, y, dot_radius, color=color, batch=main_batch, group=board_back_group)
+        d.opacity = 150
+        orbit_dots.append(d)
+    
+    # Top & Bottom
+    for c in range(no_of_cells):
+        cx = gridX + c * (grid_size + space) + grid_size // 2
+        # Top (Above row 7)
+        top_y = gridY + no_of_cells * (grid_size + space) 
+        # Bottom (Below row 0)
+        bot_y = gridY - space * 2
+        
+        # Align dots with virtual rows/cols
+        # Row 8:
+        y8 = gridY + 8 * (grid_size + space) + grid_size // 2
+        y_neg1 = gridY + (-1) * (grid_size + space) + grid_size // 2
+        
+        add_dot(cx, y8)
+        add_dot(cx, y_neg1)
+        
+    # Left & Right
+    for r in range(no_of_cells):
+        cy = gridY + r * (grid_size + space) + grid_size // 2
+        # Right (Col 8)
+        x8 = gridX + 8 * (grid_size + space) + grid_size // 2
+        # Left (Col -1)
+        x_neg1 = gridX + (-1) * (grid_size + space) + grid_size // 2
+        
+        add_dot(x8, cy)
+        add_dot(x_neg1, cy)
+
 def start_game():
-    global board, scores, current_player, SOS, hc, selected_cell
+    global board, scores, current_player, SOS, hc, selected_cell, last_move_pos, last_move_sprite
     reset_sprites()
     board = [[' ' for _ in range(no_of_cells)] for _ in range(no_of_cells)]
     scores = {'P1': 0, 'P2': 0}
@@ -390,6 +527,14 @@ def start_game():
     SOS = []
     hc = None
     selected_cell = None
+    last_move_pos = None
+    last_move_sprite = None
+    
+    create_orbit_dots()
+    
+    # Register effects
+    pyglet.clock.schedule_interval(update_effects, 1/60.0)
+    scheduled_functions.append(update_effects)
     
     # Create Grid
     for i in range(no_of_cells):
@@ -401,17 +546,21 @@ def start_game():
             grid_sprites.append(s)
             
     # Back Button
-    b_back = Button(20, window.height - 80, 120, 50, "", main_batch, ui_group, btn_img, return_home, overlay=back_img)
+    b_back = Button(20, window.height - 80, 200, 60, "", main_batch, ui_group, btn_img, return_home, overlay=back_img)
     buttons.append(b_back)
 
-# ==========================================
-# 6. GAME LOGIC
-# ==========================================
+
+# GAME LOGIC
+
 
 def check_win():
     global scores, current_player, SOS
     
     found_sos = False
+    new_sos_formed = False
+    
+    # Archive active lines to history on new score
+    flushed_history = False
     
     def is_sos(c, r, dc, dr):
         o_raw_r, o_raw_c = r + dr, c + dc
@@ -435,6 +584,15 @@ def check_win():
             for dr, dc in [(0, 1), (1, 0), (1, 1), (1, -1)]:
                 raw, sorted_v, wrapped = is_sos(c, r, dc, dr)
                 if raw and sorted_v not in SOS:
+                    if not flushed_history:
+                        # Archive active lines to history
+                        if active_lines:
+                             history_lines.append(list(active_lines))
+                             active_lines.clear()
+                        
+                        recalc_history_opacity()
+                        flushed_history = True
+                        
                     SOS.append(sorted_v)
                     scores[players[current_player]] += 1
                     found_sos = True
@@ -444,30 +602,103 @@ def check_win():
 
 def draw_win_line(raw_coords, player_idx, dotted=False):
     s1, o, s2 = raw_coords
-    def to_screen(r, c):
+    
+    def to_screen_center(r, c):
         x = gridX + c * (grid_size + space) + grid_size // 2
         y = gridY + r * (grid_size + space) + grid_size // 2
         return x, y
+
+    def is_wrapped(r1, c1, r2, c2):
+        return abs(r1 - r2) > 1 or abs(c1 - c2) > 1
+
+    def draw_segment(r1, c1, r2, c2):
+        if is_wrapped(r1, c1, r2, c2):
+             vr, vc = r2, c2
+             if abs(r1 - r2) > 1: vr = r1 + 1 if r2 < r1 else r1 - 1 
+             if abs(c1 - c2) > 1: vc = c1 + 1 if c2 < c1 else c1 - 1
+             
+             x1, y1 = to_screen_center(r1, c1)
+             x2, y2 = to_screen_center(vr, vc) # Dot position
+             
+             # Shorten line by 10% to create gap
+             x2_new = x1 + (x2 - x1) * 0.9
+             y2_new = y1 + (y2 - y1) * 0.9
+             
+             draw_dashed_line(x1, y1, x2_new, y2_new, player_idx, segments=8) 
+             
+             vr2, vc2 = r1, c1
+             if abs(r1 - r2) > 1: vr2 = r2 - 1 if r1 > r2 else r2 + 1 
+             if abs(c1 - c2) > 1: vc2 = c2 - 1 if c1 > c2 else c2 + 1
+             
+             x3, y3 = to_screen_center(vr2, vc2) # Dot position
+             x4, y4 = to_screen_center(r2, c2)   # Cell position
+             
+             # Shorten line by 10% to create gap
+             x3_new = x3 + (x4 - x3) * 0.1
+             y3_new = y3 + (y4 - y3) * 0.1
+             
+             draw_dashed_line(x3_new, y3_new, x4, y4, player_idx, segments=8)
+             
+        else:
+             x1, y1 = to_screen_center(r1, c1)
+             x2, y2 = to_screen_center(r2, c2)
+             create_line(x1, y1, x2, y2, player_idx)
+
+    # Process S1 -> O
+    draw_segment(s1[0], s1[1], o[0], o[1])
+    # Process O -> S2
+    draw_segment(o[0], o[1], s2[0], s2[1])
+
+def draw_dashed_line(x1, y1, x2, y2, p_idx, segments=6):
+    colors = [(0, 183, 239), (237, 28, 36)]
+    total_len = math.sqrt((x2-x1)**2 + (y2-y1)**2)
+    if total_len == 0: return
+    
+    dx = (x2 - x1) / total_len
+    dy = (y2 - y1) / total_len
+    
+    # Dense dots: 1 dot every 10px
+    num_dots = int(total_len / 10) 
+    if num_dots < 3: num_dots = 3
+    
+    step = total_len / num_dots
+    dash_len = step * 0.6
+    
+    for i in range(num_dots):
+        dist = i * step
         
-    if not dotted:
-         x1, y1 = to_screen(s1[0], s1[1])
-         x2, y2 = to_screen(s2[0], s2[1])
-         create_line(x1, y1, x2, y2, player_idx)
-    else:
-         ox, oy = to_screen(o[0], o[1])
-         x1, y1 = to_screen(s1[0], s1[1])
-         x2, y2 = to_screen(s2[0], s2[1])
-         create_line(x1, y1, ox, oy, player_idx, True)
-         create_line(ox, oy, x2, y2, player_idx, True)
+        sx = x1 + dx * dist
+        sy = y1 + dy * dist
+        
+        ex = sx + dx * dash_len
+        ey = sy + dy * dash_len
+        
+        l = shapes.Line(sx, sy, ex, ey, thickness=line_thickness, color=colors[p_idx], batch=main_batch, group=ui_group)
+        l.opacity = 255 # Start Bright
+        lines.append(l)
+        active_lines.append(l)
 
 def create_line(x1, y1, x2, y2, p_idx, is_dot=False):
     colors = [(0, 183, 239), (237, 28, 36)]
     l = shapes.Line(x1, y1, x2, y2, thickness=line_thickness, color=colors[p_idx], batch=main_batch, group=ui_group)
-    l.opacity = 150
+    l.opacity = 255 # Start bright
     lines.append(l)
+    active_lines.append(l)
 
 def place_symbol(r, c, symbol):
+    global last_move_pos, last_move_sprite
     board[r][c] = symbol
+    
+    # 1. Update Last Move
+    last_move_pos = (r, c)
+    if last_move_sprite: last_move_sprite.delete()
+    
+    lm_x = gridX + c * (grid_size + space) + space // 2
+    lm_y = gridY + r * (grid_size + space) + space // 2
+    last_move_sprite = pyglet.sprite.Sprite(last_move_img, x=lm_x, y=lm_y, batch=main_batch, group=highlight_group)
+    last_move_sprite.scale = grid_size / max(last_move_img.width, last_move_img.height)
+    
+    # 2. Place Symbol
     img = img_s if symbol == 'S' else img_o
     x = gridX + c * (grid_size + space) + 0.1 * grid_size
     y = gridY + r * (grid_size + space) + 0.1 * grid_size
@@ -484,9 +715,8 @@ def end_game():
     elif s2 > s1: winner_text = f"{players[1]} WINS!"
     else: winner_text = "DRAW!"
 
-# ==========================================
-# 7. INPUT & BOT CONTROL
-# ==========================================
+# INPUT & BOT CONTROL
+
 
 def bot_turn_trigger(dt):
     bot_turn_execute()
@@ -588,6 +818,23 @@ def on_key_press(symbol, modifiers):
                     if game_mode == GameMode.PVE and current_player == 1:
                         pyglet.clock.schedule_once(bot_turn_trigger, 0.5)
 
+def draw_outline_label(text, x, y, font_name, font_size, color, anchor_x='center', stroke_width=2):
+    # Draw black outline
+    offsets = []
+    for dx in range(-stroke_width, stroke_width + 1):
+        for dy in range(-stroke_width, stroke_width + 1):
+            if dx == 0 and dy == 0: continue
+            if dx**2 + dy**2 > stroke_width**2 + 1: continue 
+            offsets.append((dx, dy))
+            
+    for dx, dy in offsets:
+        pyglet.text.Label(text, font_name=font_name, font_size=font_size, color=(0, 0, 0, 255),
+                          x=x+dx, y=y+dy, anchor_x=anchor_x).draw()
+                          
+    # Draw main text
+    pyglet.text.Label(text, font_name=font_name, font_size=font_size, color=color,
+                      x=x, y=y, anchor_x=anchor_x).draw()
+
 @window.event
 def on_draw():
     window.clear()
@@ -599,11 +846,21 @@ def on_draw():
         p2_score = scores[players[1]]
         top_y = window.height - 50
         
-        pyglet.text.Label(f"{players[0]}: {p1_score}", font_name=custom_font, font_size=24, color=(0, 183, 239, 255),
-                          x=window.width//4, y=top_y, anchor_x='center').draw()
-                          
-        pyglet.text.Label(f"{players[1]}: {p2_score}", font_name=custom_font, font_size=24, color=(237, 28, 36, 255),
-                          x=3*window.width//4, y=top_y, anchor_x='center').draw()
+        # Calculate available margin
+        grid_pix_w = no_of_cells * (grid_size + space)
+        margin = (window.width - grid_pix_w) / 2
+        
+        # Center of Left Margin
+        x_p1 = margin / 2
+        # Center of Right Margin
+        x_p2 = window.width - (margin / 2)
+        
+        # Draw Outlined Scores
+        draw_outline_label(f"{players[0]}: {p1_score}", x_p1, window.height // 2, 
+                           custom_font, 30, (0, 183, 239, 255), stroke_width=2)
+                           
+        draw_outline_label(f"{players[1]}: {p2_score}", x_p2, window.height // 2, 
+                           custom_font, 30, (237, 28, 36, 255), stroke_width=2)
                           
         if game_state == GameState.GAME_OVER:
              pyglet.text.Label(f"GAME OVER: {winner_text}", font_name=custom_font, font_size=32, 
@@ -617,5 +874,6 @@ def on_draw():
                                x=window.width//2, y=top_y, anchor_x='center').draw()
 
 # Init
+pyglet.clock.schedule_interval(update_ui, 1/60.0)
 setup_home()
 pyglet.app.run()
