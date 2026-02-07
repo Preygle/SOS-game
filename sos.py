@@ -1,16 +1,115 @@
 import pyglet
 from pyglet import shapes, font
+from pyglet import shapes, font
 from pyglet.window import key
 from enum import Enum
 import random
 import math
-import torch
+# import torch
 import numpy as np
 import os
 import sys
 
 # Import Bot Logic
 from greedy_bot import SOSBot
+
+# Helper: Blend Images using Numpy
+def blend_images(bg_img, overlay_img):
+    if not overlay_img: return bg_img
+    
+    # Get Numpy arrays
+    def get_arr(img):
+        if not hasattr(img, 'get_image_data'): img = img.get_texture()
+        idata = img.get_image_data()
+        data = idata.get_data('RGBA', idata.width * 4)
+        return np.frombuffer(data, dtype=np.uint8).reshape((idata.height, idata.width, 4))
+    
+    bg_arr = get_arr(bg_img)
+    ov_arr = get_arr(overlay_img)
+    
+    # Resize overlay to match BG (Nearest Neighbor)
+    h, w = bg_arr.shape[:2]
+    oh, ow = ov_arr.shape[:2]
+    
+    if (oh, ow) != (h, w):
+        row_idx = (np.arange(h) * (oh / h)).astype(int)
+        col_idx = (np.arange(w) * (ow / w)).astype(int)
+        ov_arr = ov_arr[row_idx[:, None], col_idx]
+        
+    # Alpha Blend
+    # Normalize to 0-1
+    src = ov_arr.astype(float) / 255.0
+    dst = bg_arr.astype(float) / 255.0
+    
+    # Simplified Alpha Compositing
+    src_rgb = src[..., :3]
+    src_a = src[..., 3:4] # (H,W,1)
+    
+    dst_rgb = dst[..., :3]
+    dst_a = dst[..., 3:4]
+    
+    # Output Alpha
+    out_a = src_a + dst_a * (1.0 - src_a)
+    
+    # Output RGB
+    # Prevent division by zero
+    safe_alpha = np.maximum(out_a, 1e-6)
+    out_rgb = (src_rgb * src_a + dst_rgb * dst_a * (1.0 - src_a)) / safe_alpha
+    
+    out = np.dstack((out_rgb, out_a)) * 255.0
+    out = np.clip(out, 0, 255).astype(np.uint8)
+    
+    # Convert back to ImageData
+    return pyglet.image.ImageData(w, h, 'RGBA', out.tobytes())
+
+# Helper: Blend Images using Numpy
+def blend_images(bg_img, overlay_img):
+    if not overlay_img: return bg_img
+    
+    # Get Numpy arrays
+    def get_arr(img):
+        if not hasattr(img, 'get_image_data'): img = img.get_texture()
+        idata = img.get_image_data()
+        data = idata.get_data('RGBA', idata.width * 4)
+        return np.frombuffer(data, dtype=np.uint8).reshape((idata.height, idata.width, 4))
+    
+    bg_arr = get_arr(bg_img)
+    ov_arr = get_arr(overlay_img)
+    
+    # Resize overlay to match BG (Nearest Neighbor)
+    h, w = bg_arr.shape[:2]
+    oh, ow = ov_arr.shape[:2]
+    
+    if (oh, ow) != (h, w):
+        row_idx = (np.arange(h) * (oh / h)).astype(int)
+        col_idx = (np.arange(w) * (ow / w)).astype(int)
+        ov_arr = ov_arr[row_idx[:, None], col_idx]
+        
+    # Alpha Blend
+    # Normalize to 0-1
+    src = ov_arr.astype(float) / 255.0
+    dst = bg_arr.astype(float) / 255.0
+    
+    # Simplified Alpha Compositing
+    src_rgb = src[..., :3]
+    src_a = src[..., 3:4] # (H,W,1)
+    
+    dst_rgb = dst[..., :3]
+    dst_a = dst[..., 3:4]
+    
+    # Output Alpha
+    out_a = src_a + dst_a * (1.0 - src_a)
+    
+    # Output RGB
+    # Prevent division by zero
+    safe_alpha = np.maximum(out_a, 1e-6)
+    out_rgb = (src_rgb * src_a + dst_rgb * dst_a * (1.0 - src_a)) / safe_alpha
+    
+    out = np.dstack((out_rgb, out_a)) * 255.0
+    out = np.clip(out, 0, 255).astype(np.uint8)
+    
+    # Convert back to ImageData
+    return pyglet.image.ImageData(w, h, 'RGBA', out.tobytes())
 
 
 # BOT WRAPPER (From sos_bot.py)
@@ -26,6 +125,55 @@ class AlphaBot:
 # UI UTILS & BUTTON CLASS
 
 
+# Helper: Blend Images using Numpy
+def blend_images(bg_img, overlay_img):
+    if not overlay_img: return bg_img
+    
+    # Get Numpy arrays
+    def get_arr(img):
+        if not hasattr(img, 'get_image_data'): img = img.get_texture()
+        idata = img.get_image_data()
+        data = idata.get_data('RGBA', idata.width * 4)
+        return np.frombuffer(data, dtype=np.uint8).reshape((idata.height, idata.width, 4))
+    
+    bg_arr = get_arr(bg_img)
+    ov_arr = get_arr(overlay_img)
+    
+    # Resize overlay to match BG (Nearest Neighbor)
+    h, w = bg_arr.shape[:2]
+    oh, ow = ov_arr.shape[:2]
+    
+    if (oh, ow) != (h, w):
+        row_idx = (np.arange(h) * (oh / h)).astype(int)
+        col_idx = (np.arange(w) * (ow / w)).astype(int)
+        ov_arr = ov_arr[row_idx[:, None], col_idx]
+        
+    # Alpha Blend
+    # Normalize to 0-1
+    src = ov_arr.astype(float) / 255.0
+    dst = bg_arr.astype(float) / 255.0
+    
+    # Simplified Alpha Compositing
+    src_rgb = src[..., :3]
+    src_a = src[..., 3:4] # (H,W,1)
+    
+    dst_rgb = dst[..., :3]
+    dst_a = dst[..., 3:4]
+    
+    # Output Alpha
+    out_a = src_a + dst_a * (1.0 - src_a)
+    
+    # Output RGB
+    # Prevent division by zero
+    safe_alpha = np.maximum(out_a, 1e-6)
+    out_rgb = (src_rgb * src_a + dst_rgb * dst_a * (1.0 - src_a)) / safe_alpha
+    
+    out = np.dstack((out_rgb, out_a)) * 255.0
+    out = np.clip(out, 0, 255).astype(np.uint8)
+    
+    # Convert back to ImageData
+    return pyglet.image.ImageData(w, h, 'RGBA', out.tobytes())
+
 class Button:
     def __init__(self, x, y, width, height, text, batch, group, img_normal, callback=None, font_size=18, overlay=None, is_selected=False):
         self.x = x
@@ -34,75 +182,120 @@ class Button:
         self.height = height
         self.callback = callback
         self.is_selected = is_selected
+        self.batch = batch
+        self.orig_group = group
         
-        # Scale based on image size
-        self.base_scale_x = width / img_normal.width
-        self.base_scale_y = height / img_normal.height
+        # Merge Images: "Merge it actually in a new image"
+        self.img_normal = img_normal
+        self.img_merged = blend_images(img_normal, overlay) if overlay else img_normal
         
-        self.sprite = pyglet.sprite.Sprite(img_normal, x=x, y=y, batch=batch, group=group)
+        # Scale based on merged image size
+        self.base_scale_x = width / self.img_merged.width
+        self.base_scale_y = height / self.img_merged.height
+        
+        # Sprite uses pure unified texture
+        self.sprite = pyglet.sprite.Sprite(self.img_merged, x=x, y=y, batch=batch, group=group)
         self.sprite.scale_x = self.base_scale_x
         self.sprite.scale_y = self.base_scale_y
         
-        self.img_normal = img_normal
+        # Force much higher Z-order for text to ensure it sits above all strips
+        self.text_group_parent = animation_text_group 
         
-        self.overlay_sprite = None
-        if overlay:
-             self.overlay_sprite = pyglet.sprite.Sprite(overlay, x=x, y=y, batch=batch, group=pyglet.graphics.Group(order=group.order+1))
-             self.overlay_sprite.scale_x = width / overlay.width
-             self.overlay_sprite.scale_y = height / overlay.height
-             
-        self.total_time = 0.0
-
-        # Center text
+        self.strips = [] # For CPU Animation
+        
         self.label = None
         if text:
             self.label = pyglet.text.Label(text, font_name=custom_font, font_size=font_size,
-                                           x=x + width//2, y=y + height//2,
+                                           x=int(x + width//2), y=int(y + height//2),
                                            anchor_x='center', anchor_y='center',
                                            color=(255, 255, 255, 255),
-                                           batch=batch, group=pyglet.graphics.Group(order=group.order+2))
+                                           batch=batch, group=self.text_group_parent)
+        self.total_time = 0.0
+
+    def create_strips(self):
+        if self.strips: return
+        
+        # Slice the MERGED image
+        img = self.img_merged
+        if not hasattr(img, 'get_region'): img = img.get_texture()
+        total_w = img.width
+        chunk_w = max(1, total_w // SINE_CHUNKS)
+        
+        for i in range(SINE_CHUNKS):
+            x = i * chunk_w
+            if x >= total_w: break
+            w = min(chunk_w, total_w - x)
+            # Create strip region from the combined texture
+            region = img.get_region(x, 0, w, img.height)
+            s = pyglet.sprite.Sprite(region, batch=self.batch, group=self.orig_group)
+            s.anim_x_offset = x 
+            self.strips.append(s)
+
+    def delete_strips(self):
+        for s in self.strips:
+            s.delete()
+        self.strips.clear()
 
     def update(self, dt):
         self.total_time += dt
         
-        # Pulse animation for selected state
-        base_anim = 1.05 + 0.05 * math.sin(self.total_time * 5.0) if self.is_selected else 1.0
-            
         hover_anim = 1.1 if hasattr(self, 'is_hovered') and self.is_hovered else 1.0
         
-        final_scale = 1.0
-        if self.is_selected:
-            final_scale = base_anim
-            if hasattr(self, 'is_hovered') and self.is_hovered:
-                final_scale += 0.05 
-        else:
-            final_scale = hover_anim
-
-        # Apply Scale
+        final_scale = 1.05 if self.is_selected else 1.0
+        if hasattr(self, 'is_hovered') and self.is_hovered:
+             final_scale += 0.05
+        
         final_sx = self.base_scale_x * final_scale
         final_sy = self.base_scale_y * final_scale
         
-        self.sprite.scale_x = final_sx
-        self.sprite.scale_y = final_sy
-        
-        # Adjust position to center
-        current_w = self.img_normal.width * final_sx
-        current_h = self.img_normal.height * final_sy
+        current_w = self.img_merged.width * final_sx
+        current_h = self.img_merged.height * final_sy
         
         x_shift = (current_w - self.width) / 2
         y_shift = (current_h - self.height) / 2
         
-        self.sprite.x = self.x - x_shift
-        self.sprite.y = self.y - y_shift
+        base_x = self.x - x_shift
+        base_y = self.y - y_shift
         
-        if self.overlay_sprite:
-             o_base_sx = self.width / self.overlay_sprite.image.width
-             o_base_sy = self.height / self.overlay_sprite.image.height
-             
-             self.overlay_sprite.scale_x = o_base_sx * final_scale
-             self.overlay_sprite.scale_y = o_base_sy * final_scale
-             self.overlay_sprite.x = self.x - x_shift
-             self.overlay_sprite.y = self.y - y_shift
+        # Apply to Main Sprite (Static)
+        self.sprite.scale_x = final_sx
+        self.sprite.scale_y = final_sy
+        self.sprite.x = base_x
+        self.sprite.y = base_y
+        
+        # Strip Animation (Only if selected)
+        if self.is_selected:
+            if not self.strips:
+                self.create_strips()
+                self.sprite.visible = False # Hide main sprite
+                
+            # Update Strips
+            for s in self.strips:
+                s.scale_x = final_sx
+                s.scale_y = final_sy
+                s.x = base_x + s.anim_x_offset * final_sx
+                
+                phase_x = s.x - base_x
+                
+                angle = SINE_FREQ * 0.01 * phase_x + self.total_time * SINE_SPEED
+                y_off = SINE_AMP * math.sin(angle)
+                s.y = base_y + y_off
+            
+            # Text (Label)
+            if self.label:
+                 center_angle = SINE_FREQ * 0.01 * (current_w/2) + self.total_time * SINE_SPEED
+                 center_y_off = SINE_AMP * math.sin(center_angle)
+                 self.label.y = int((self.y + self.height//2) + center_y_off)
+                 self.label.x = int(self.x + self.width//2)
+                 
+        else:
+            if self.strips:
+                self.delete_strips()
+                self.sprite.visible = True
+                
+            if self.label: 
+                self.label.y = self.y + self.height//2
+                self.label.x = self.x + self.width//2
         
     def check_hit(self, x, y):
         return self.x <= x <= self.x + self.width and self.y <= y <= self.y + self.height
@@ -124,8 +317,8 @@ class Button:
 
     def delete(self):
         if self.sprite: self.sprite.delete()
-        if self.overlay_sprite: self.overlay_sprite.delete()
         if self.label: self.label.delete()
+        self.delete_strips()
 
 
 # GAME CONSTANTS & STATE
@@ -209,6 +402,8 @@ highlight_group = pyglet.graphics.Group(order=2)
 board_main_group = pyglet.graphics.Group(order=3) 
 ui_group = pyglet.graphics.Group(order=4)         
 text_group = pyglet.graphics.Group(order=6)
+# High Z-order group for animated text to ensure visibility
+animation_text_group = pyglet.graphics.Group(order=20)
 
 # Board Dimensions
 no_of_cells = 8 
@@ -232,6 +427,17 @@ scheduled_functions = []
 orbit_dots = []
 active_lines = []
 history_lines = []
+grid_labels = {}
+
+# ==========================================
+# 5. SHADERS (SINE WAVE)
+# ==========================================
+
+# Animation Parameters (Editable)
+SINE_AMP = 16
+SINE_FREQ = 2.5
+SINE_SPEED = 10
+SINE_CHUNKS = 32
 
 # UI SCENES
 
@@ -277,6 +483,7 @@ def recalc_history_opacity():
         for l in group:
             l.opacity = int(op)
             l.width = line_thickness # Reset Pulse
+
             
 def setup_home():
     clear_ui()
@@ -472,6 +679,10 @@ def reset_sprites():
     
     active_lines.clear()
     history_lines.clear()
+
+    for k, l in grid_labels.items():
+        l.delete()
+    grid_labels.clear()
     
     for f in scheduled_functions:
         pyglet.clock.unschedule(f)
@@ -544,6 +755,27 @@ def start_game():
             s = pyglet.sprite.Sprite(cell_bg, x=x, y=y, batch=main_batch, group=board_back_group)
             s.scale = grid_size / max(cell_bg.width, cell_bg.height)
             grid_sprites.append(s)
+
+            # Add Chess Coordinates (A1..H8) on Bottom-Right
+            # Cols: A -> H (Left -> Right)
+            # Rows: 1 -> 8 (Top -> Bottom)
+            col_str = chr(ord('A') + i)
+            row_str = str(no_of_cells - j) 
+            label_text = f"{col_str}{row_str}"
+            
+            # Position: Bottom Right of the cell
+            # Cell BG Anchor is (0,0) based on logic
+            # Label Anchor: Right, Bottom
+            lbl_x = x + grid_size * 0.90
+            lbl_y = y + grid_size * 0.10
+            
+            f_size = int(grid_size * 0.15)
+            if f_size < 8: f_size = 8
+            
+            l = pyglet.text.Label(label_text, font_name=custom_font, font_size=f_size,
+                                  x=lbl_x, y=lbl_y, anchor_x='right', anchor_y='bottom',
+                                  color=(233, 30, 99, 130), batch=main_batch, group=highlight_group)
+            grid_labels[(j, i)] = l
             
     # Back Button
     b_back = Button(20, window.height - 80, 200, 60, "", main_batch, ui_group, btn_img, return_home, overlay=back_img)
@@ -688,6 +920,10 @@ def create_line(x1, y1, x2, y2, p_idx, is_dot=False):
 def place_symbol(r, c, symbol):
     global last_move_pos, last_move_sprite
     board[r][c] = symbol
+    
+    # Hide coordinate label
+    if (r, c) in grid_labels:
+        grid_labels[(r, c)].visible = False
     
     # 1. Update Last Move
     last_move_pos = (r, c)
