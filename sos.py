@@ -393,6 +393,7 @@ cell_sel = pyglet.resource.image('cell_selected.png')
 last_move_img = pyglet.resource.image('last_move.png')
 img_s = pyglet.resource.image('s.png')
 img_o = pyglet.resource.image('o.png')
+history_img = pyglet.resource.image('History.png')
 
 # Batches
 main_batch = pyglet.graphics.Batch()
@@ -402,6 +403,9 @@ highlight_group = pyglet.graphics.Group(order=2)
 board_main_group = pyglet.graphics.Group(order=3) 
 ui_group = pyglet.graphics.Group(order=4)         
 text_group = pyglet.graphics.Group(order=6)
+# High Z-order group for animated text to ensure visibility
+history_panel_group = pyglet.graphics.Group(order=10)
+hud_group = pyglet.graphics.Group(order=12)
 # High Z-order group for animated text to ensure visibility
 animation_text_group = pyglet.graphics.Group(order=20)
 
@@ -427,7 +431,33 @@ scheduled_functions = []
 orbit_dots = []
 active_lines = []
 history_lines = []
+active_lines = []
+history_lines = []
 grid_labels = {}
+match_history = []
+show_history = False
+history_bg_shape = None
+history_border_shape = None
+hist_btn_bg = None
+hist_btn_tri = None
+
+# Game State Globals (Initialized here to avoid NameError in reset_sprites)
+hc = None
+selected_cell = None
+last_move_pos = None
+last_move_sprite = None
+board = []
+scores = {}
+current_player = 0
+SOS = []
+bot_turn_trigger = None # Placeholder if it's a variable, or function name? 
+# If bot_turn_trigger is a function, we shouldn't overwrite it with None if defined later.
+# But python functions are hoisted if defined with `def`.
+# If `bot_turn_trigger` is `def` defined later, `unschedule` works with the name.
+
+# Actually, if `bot_turn_trigger` is `def`, I don't need to init it.
+# If `hc` is variable, I do.
+
 
 # ==========================================
 # 5. SHADERS (SINE WAVE)
@@ -652,7 +682,8 @@ def start_pve():
     start_game()
 
 def reset_sprites():
-    global last_move_sprite
+    global last_move_sprite, hc, selected_cell, history_bg_shape, show_history
+    global hist_btn_bg, hist_btn_tri
     for s in sprites:
         s.delete()
     sprites.clear()
@@ -683,10 +714,30 @@ def reset_sprites():
     for k, l in grid_labels.items():
         l.delete()
     grid_labels.clear()
+
+    match_history.clear()
+    
+    # Remove history panel shape from batch visible logic
+    if history_bg_shape: 
+         history_bg_shape.visible = False
+    
+    # Hide any lingering selected cell highlight
+    if hc:
+        hc.delete()
+        hc = None
+        
+    selected_cell = None
+    show_history = False
     
     for f in scheduled_functions:
         pyglet.clock.unschedule(f)
     scheduled_functions.clear()
+    
+    # Unschedule any potential one-off bot triggers
+    pyglet.clock.unschedule(bot_turn_trigger)
+
+    if hist_btn_bg: hist_btn_bg.delete(); hist_btn_bg = None
+    if hist_btn_tri: hist_btn_tri.delete(); hist_btn_tri = None
 
 def create_orbit_dots():
     if not wrap_around: return 
@@ -728,11 +779,64 @@ def create_orbit_dots():
         add_dot(x_neg1, cy)
 
 def start_game():
-    global board, scores, current_player, SOS, hc, selected_cell, last_move_pos, last_move_sprite
+    global board, scores, current_player, SOS, hc, selected_cell, last_move_pos, last_move_sprite, show_history
+    global history_bg_shape, history_border_shape
+    global hist_btn_bg, hist_btn_tri
+    
     reset_sprites()
     board = [[' ' for _ in range(no_of_cells)] for _ in range(no_of_cells)]
     scores = {'P1': 0, 'P2': 0}
-    if game_mode == GameMode.PVE: scores = {'P1': 0, 'Bot': 0}
+    show_history = False
+    
+    # Create History Panel Shapes (Hidden by default)
+    # The user wants "reduction from both top and bottom such that the history area dosent encompasses the history button"
+    # Button is at (width-60, height-60)
+    # So we should start the panel below the button
+    
+    panel_w = 350 
+    panel_x = window.width - panel_w
+    
+    # Let's say button area is top 80 pixels
+    # And bottom area is 50 pixels
+    # Panel Y = 50
+    # Panel Height = window.height - 80 - 50 = window.height - 130
+    
+    # Create History Panel Shapes (Hidden by default)
+    # User requested: Rounded Rect, Color #33203F (51, 32, 63), Alpha 0.7 (179)
+    # Centered in right margin
+    
+    panel_w = 350
+    
+    # Calculate Right Margin Center
+    # Grid End X = gridX + total_grid_dim
+    # But wait, gridX is calculated at module level.
+    # gridX = window.width // 2 - total_grid_dim // 2
+    # So Right Margin moves from (gridX + total_grid_dim) to window.width
+    
+    grid_end_x = gridX + total_grid_dim
+    margin_width = window.width - grid_end_x
+    
+    # Center of margin
+    margin_center_x = grid_end_x + margin_width // 2
+    panel_x = margin_center_x - panel_w // 2
+    
+    panel_y = 50
+    panel_h = window.height - 130
+    
+    # Try using RoundedRectangle. If fails (old pyglet), fallback to Rectangle
+    try:
+        history_bg_shape = shapes.RoundedRectangle(panel_x, panel_y, panel_w, panel_h, radius=20, color=(51, 32, 63, 179), batch=main_batch, group=history_panel_group)
+    except AttributeError:
+        # Fallback for older pyglet
+        history_bg_shape = shapes.Rectangle(panel_x, panel_y, panel_w, panel_h, color=(51, 32, 63, 179), batch=main_batch, group=history_panel_group)
+        
+    history_bg_shape.visible = False
+
+    # Remove border shape as it conflicts with rounded look (or would need to be rounded too)
+    history_border_shape = None
+    
+    # Initialize scores for ALL players to avoid KeyError
+    scores = {p: 0 for p in players}
     
     current_player = 0
     SOS = []
@@ -759,8 +863,9 @@ def start_game():
             # Add Chess Coordinates (A1..H8) on Bottom-Right
             # Cols: A -> H (Left -> Right)
             # Rows: 1 -> 8 (Top -> Bottom)
+            # Rows: 1 -> 8 (Top -> Bottom) -> Now User requested Bottom=1
             col_str = chr(ord('A') + i)
-            row_str = str(no_of_cells - j) 
+            row_str = str(j + 1)
             label_text = f"{col_str}{row_str}"
             
             # Position: Bottom Right of the cell
@@ -780,6 +885,79 @@ def start_game():
     # Back Button
     b_back = Button(20, window.height - 80, 200, 60, "", main_batch, ui_group, btn_img, return_home, overlay=back_img)
     buttons.append(b_back)
+
+    # History Button (Right)
+    # Using a simple "H" label on a small button for now, or repurposing btn_img
+    def toggle_history():
+        global show_history
+        show_history = not show_history
+        if history_bg_shape: history_bg_shape.visible = show_history
+        # history_border_shape is removed/None
+        
+    # Button needs to be accessbile -> Draw ON TOP of panel (Order 12 vs 10)
+    # History Toggle (Triangle Button)
+    # Replaces sprite button.
+    # Dimensions: 40x40. Position: Bottom-Right corner margin.
+    
+    tb_w = 40
+    tb_h = 40
+    tb_x = window.width - tb_w - 20
+    tb_y = 20 # Bottom margin
+    
+    # Background: Rectangle (Dark Grey/Black?)
+    # "red/blue" was for separator. User didn't specify button color, assuming standard UI or transparent?
+    # "small rectangle having a triangle in it"
+    # Let's align with the panel style: Rounded Rect or Rect.
+    # Let's use Rect. Color: #33203F (Panel Color) or lighter?
+    # Let's use a visible color.
+    
+    hist_btn_bg = shapes.Rectangle(tb_x, tb_y, tb_w, tb_h, color=(51, 32, 63), batch=main_batch, group=hud_group)
+    hist_btn_bg.opacity = 200
+    
+    # Triangle
+    # Center:
+    tx = tb_x + tb_w // 2
+    ty = tb_y + tb_h // 2
+    ts = 10 # Size
+    
+    # Default: Hidden -> Face LEFT (<)
+    # Tip at tx - ts, Base at tx + ts
+    
+    # Vertices: (TipX, TipY), (TopRightX, TopRightY), (BotRightX, BotRightY)
+    # Left: (tx - ts, ty), (tx + ts, ty + ts), (tx + ts, ty - ts)
+    
+    hist_btn_tri = shapes.Triangle(tx - ts, ty, tx + ts, ty + ts, tx + ts, ty - ts, color=(255, 255, 255), batch=main_batch, group=hud_group)
+    
+    def toggle_history():
+        global show_history
+        show_history = not show_history
+        if history_bg_shape: history_bg_shape.visible = show_history
+        
+        # Update Triangle
+        # Shown -> Face RIGHT (>)
+        # Hidden -> Face LEFT (<)
+        
+        if show_history:
+             # Right: (tx + ts, ty), (tx - ts, ty + ts), (tx - ts, ty - ts)
+             hist_btn_tri.x = tx + ts
+             hist_btn_tri.y = ty
+             hist_btn_tri.x2 = tx - ts
+             hist_btn_tri.y2 = ty + ts
+             hist_btn_tri.x3 = tx - ts
+             hist_btn_tri.y3 = ty - ts
+        else:
+             # Left
+             hist_btn_tri.x = tx - ts
+             hist_btn_tri.y = ty
+             hist_btn_tri.x2 = tx + ts
+             hist_btn_tri.y2 = ty + ts
+             hist_btn_tri.x3 = tx + ts
+             hist_btn_tri.y3 = ty - ts
+             
+    # Bind click event manually in on_mouse_press since we aren't using Button class
+    # We'll need a way to reference this callback.
+    # We can assign it to `hist_btn_bg.callback` and check it in on_mouse_press.
+    hist_btn_bg.callback = toggle_history
 
 
 # GAME LOGIC
@@ -829,6 +1007,40 @@ def check_win():
                     scores[players[current_player]] += 1
                     found_sos = True
                     draw_win_line(raw, current_player, dotted=wrapped)
+                    
+                    # Record History
+                    # (current_player, raw_coords) -> match_history
+                    # Format: "A1, B2, C3"
+                    # Highlight the last move in YELLOW (#FFFF00)
+                    
+                    def coords_to_str(r, c):
+                        col = chr(ord('A') + c)
+                        row = str(r + 1)
+                        return f"{col}{row}"
+                        
+                    s1, o, s2 = raw
+                    
+                    # Determine colors
+                    # P1 (Blue): #00B7EF
+                    # P2 (Red): #ED1C24
+                    # Highlight: #FFFF00
+                    
+                    base_color = "#00B7EF" if current_player == 0 else "#ED1C24"
+                    hl_color = "#FFFF00"
+                    
+                    parts = []
+                    for coord in [s1, o, s2]:
+                        txt = coords_to_str(*coord)
+                        if coord == last_move_pos:
+                            parts.append(f"<font color='{hl_color}'>{txt}</font>")
+                        else:
+                            parts.append(f"<font color='{base_color}'>{txt}</font>")
+                            
+                    separator = f"<font color='{base_color}'> ✧ </font>"
+                    notation = separator.join(parts)
+                    # Wrap in a font tag to ensure size/font is applied if needed, but HTMLLabel handles it.
+                    # We store the HTML string directly.
+                    match_history.append({'player': current_player, 'notation': notation})
 
     return found_sos
 
@@ -997,6 +1209,17 @@ def on_mouse_press(x, y, button, modifiers):
         if b.on_mouse_press(x, y, button, modifiers):
             return 
             
+    # Check History Toggle Button
+    # It's a global shape `hist_btn_bg`
+    if game_state == GameState.PLAYING or game_state == GameState.GAME_OVER:
+        if hist_btn_bg:
+             # AABB Check
+             if hist_btn_bg.x <= x <= hist_btn_bg.x + hist_btn_bg.width and \
+                hist_btn_bg.y <= y <= hist_btn_bg.y + hist_btn_bg.height:
+                    if hasattr(hist_btn_bg, 'callback'):
+                        hist_btn_bg.callback()
+                    return 
+            
     if game_state == GameState.PLAYING and ((game_mode == GameMode.PVE and current_player == 0) or game_mode == GameMode.PVP):
         if gridX <= x <= gridX + cellSize and gridY <= y <= gridY + cellSize:
             c = int((x - gridX) // (grid_size + space))
@@ -1086,17 +1309,75 @@ def on_draw():
         grid_pix_w = no_of_cells * (grid_size + space)
         margin = (window.width - grid_pix_w) / 2
         
-        # Center of Left Margin
-        x_p1 = margin / 2
-        # Center of Right Margin
-        x_p2 = window.width - (margin / 2)
-        
-        # Draw Outlined Scores
-        draw_outline_label(f"{players[0]}: {p1_score}", x_p1, window.height // 2, 
-                           custom_font, 30, (0, 183, 239, 255), stroke_width=2)
-                           
-        draw_outline_label(f"{players[1]}: {p2_score}", x_p2, window.height // 2, 
-                           custom_font, 30, (237, 28, 36, 255), stroke_width=2)
+        if show_history:
+             # Reposition Header & Content
+             # Use the actual shape position to ensure alignment
+             if history_bg_shape:
+                 panel_x = history_bg_shape.x
+                 panel_w = history_bg_shape.width
+             else:
+                 # Fallback if shape missing (shouldn't happen)
+                 panel_w = 350
+                 panel_x = window.width - panel_w
+             
+             # Header
+             # Inside the new panel area (Top)
+             panel_top = 50 + (window.height - 130)
+             
+             # Color F2E9FF -> (242, 233, 255)
+             pyglet.text.Label("HISTORY", font_name=custom_font, font_size=16,
+                               x=panel_x + panel_w//2, y=panel_top - 30, anchor_x='center',
+                               color=(242, 233, 255, 255)).draw()
+                               
+             # List Items
+             start_y = panel_top - 60
+             for i, item in enumerate(reversed(match_history)):
+                  y_pos = start_y - i * 30
+                  if y_pos < 50 + 20: break # Stop before bottom margin
+                  
+                  p_idx = item['player']
+                  txt = item['notation']
+                  # txt is now HTML string with colors embedded
+                  
+                  # Use HTMLLabel
+                  # Note: HTMLLabel anchors might behave differently.
+                  # It supports 'center', 'left', 'right'.
+                  # We want left aligned in panel? Or centered?
+                  # Center valid sequence with history
+                  centered_txt = f"<center>{txt}</center>"
+                  
+                  # Use HTMLLabel with center alignment
+                  lbl = pyglet.text.HTMLLabel(centered_txt, x=panel_x + panel_w // 2, y=y_pos, width=panel_w-20, multiline=True, anchor_x='center', anchor_y='center', batch=None)
+                  lbl.font_name = custom_font
+                  lbl.font_size = 12
+                  lbl.draw()
+
+             # Scores on Left (Stacked)
+             # "1/3 distance from the screen height (equal distance)"
+             # P1 at 2/3 Height, P2 at 1/3 Height
+             # This creates 3 equal vertical segments (Top->P1, P1->P2, P2->Bot)
+             x_scores = margin / 2
+             y_p1 = window.height * (2/3)
+             y_p2 = window.height * (1/3)
+             
+             draw_outline_label(f"{players[0]}: {p1_score}", x_scores, y_p1, 
+                                custom_font, 30, (0, 183, 239, 255), stroke_width=2)
+                                
+             draw_outline_label(f"{players[1]}: {p2_score}", x_scores, y_p2, 
+                                custom_font, 30, (237, 28, 36, 255), stroke_width=2)
+        else:
+            # Normal Layout
+            # Center of Left Margin
+            x_p1 = margin / 2
+            # Center of Right Margin
+            x_p2 = window.width - (margin / 2)
+            
+            # Draw Outlined Scores
+            draw_outline_label(f"{players[0]}: {p1_score}", x_p1, window.height // 2, 
+                               custom_font, 30, (0, 183, 239, 255), stroke_width=2)
+                               
+            draw_outline_label(f"{players[1]}: {p2_score}", x_p2, window.height // 2, 
+                               custom_font, 30, (237, 28, 36, 255), stroke_width=2)
                           
         if game_state == GameState.GAME_OVER:
              pyglet.text.Label(f"GAME OVER: {winner_text}", font_name=custom_font, font_size=32, 
