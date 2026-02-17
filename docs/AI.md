@@ -30,15 +30,34 @@ The AI uses MCTS to look ahead and simulate future game states.
 
 The AI is designed to scale from a lightweight testing configuration to a "Grandmaster" level agent.
 
-| Parameter | Current (Lite) | Grandmaster Goal | Effect |
-| :--- | :--- | :--- | :--- |
-| **iterations** | 100 | 1000 | The main "intelligence" loop. |
-| **self_play_games** | 5 | 50 | More experience per loop. Total games: 50,000. |
-| **num_simulations** | 50 | 200 | MCTS Depth. Deeper analysis = higher quality data. |
-| **num_res_blocks** | 4 | 6 | "Brain size". More blocks hold more complex strategies. |
-| **num_channels** | 64 | 128 | "Idea bandwidth". Captures more subtle board patterns. |
+| Parameter | Value | Effect |
+| :--- | :--- | :--- |
+| **iterations** | 1000 | The main "intelligence" loop. |
+| **self_play_games** | 50 | More experience per loop. Total games: 50,000. |
+| **num_simulations** | 200 | MCTS Depth. Deeper analysis = higher quality data. |
+| **num_res_blocks** | 6 | "Brain size". More blocks hold more complex strategies. |
+| **num_channels** | 128 | "Idea bandwidth". Captures more subtle board patterns. |
 
-*Note: The current `train_alpha.py` script is pre-configured with the Grandmaster parameters for maximum performance, but can be scaled down for faster training on CPU.*
+
+
+## Neural Network Block Diagram
+
+![AlphaZero Architecture](screenshots/AlphaGo.png)
+
+## Diagram Annotations & Key Highlights
+
+For your block diagram, consider highlighting these unique aspects of the AlphaZero implementation for SOS:
+
+1.  **Dual Action Output (Policy Head)**:
+    *   Unlike Go (Move only) or Chess (Move piece), SOS requires choosing **Piece Type ('S' or 'O')** per cell.
+    *   **Annotation**: "Output Vector Size 128: [0-63] = Place 'S', [64-127] = Place 'O'".
+
+2.  **Score-Aware Input (Input Block)**:
+    *   The game state is not just board positions; the current score difference is critical for strategy.
+    *   **Annotation**: "Channels 4-5 encode Normalized Player Scores".
+
+3.  **Turn-Sensitive Value**:
+    *   Due to bonus turns, the value prediction is strictly for the **Current Player**, which may not alternate every turn.
 
 ## Performance
 Even with limited training, the AlphaZero AI demonstrates strategic depth, capable of:
