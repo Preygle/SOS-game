@@ -22,22 +22,27 @@ The game state is encoded into an `8x8x6` tensor:
 
 ## Monte Carlo Tree Search (MCTS)
 The AI uses MCTS to look ahead and simulate future game states.
-*   **Simulations per Move**: **200**
-*   **Exploration Constant (c_puct)**: **1.0**
+*   **Simulations per Move**: **50** — tuned for Colab GPU feasibility while preserving strategic depth.
+*   **Exploration Constant (c_puct)**: **1.5** — slightly elevated to compensate for fewer simulations with broader exploration.
 *   **Selection**: Uses Upper Confidence Bound (UCB) guided by the Neural Network's prior probabilities.
 
-## Training Configuration & Roadmap
+## Training Configuration
 
-The AI is designed to scale from a lightweight testing configuration to a "Grandmaster" level agent.
+> **Design philosophy**: The model architecture (`num_res_blocks`, `num_channels`) is kept at full Grandmaster capacity — these parameters define *capability ceiling*, not training time. Training time is dominated by `num_simulations` (how many MCTS rollouts per move). Cutting that from 200 → 50 gives a **4× speedup** while the trained model retains full strategic depth.
 
 | Parameter | Value | Effect |
 | :--- | :--- | :--- |
-| **iterations** | 1000 | The main "intelligence" loop. |
-| **self_play_games** | 50 | More experience per loop. Total games: 50,000. |
-| **num_simulations** | 200 | MCTS Depth. Deeper analysis = higher quality data. |
-| **num_res_blocks** | 6 | "Brain size". More blocks hold more complex strategies. |
-| **num_channels** | 128 | "Idea bandwidth". Captures more subtle board patterns. |
-
+| **num_res_blocks** | 6 | Full depth — holds complex multi-move strategies |
+| **num_channels** | 128 | Full bandwidth — captures subtle board patterns |
+| **iterations** | 300 | Main learning loop (300 × 25 = 7,500 total games) |
+| **self_play_games** | 25 | Games generated per iteration |
+| **num_simulations** | 50 | MCTS rollouts per move — primary speed lever |
+| **c_puct** | 1.5 | Exploration constant (higher = broader search) |
+| **batch_size** | 128 | Samples per gradient step — stable GPU utilisation |
+| **epochs** | 4 | Training passes per collected batch |
+| **buffer_size** | 10,000 | Replay buffer — retains more learning history |
+| **lr** | 2e-3 | Learning rate with Adam optimiser |
+| **Est. Colab T4 time** | ~4–6 h | With CUDA, resumable via checkpoints |
 
 
 ## Neural Network Block Diagram

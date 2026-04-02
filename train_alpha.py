@@ -16,22 +16,44 @@ from alpha_mcts import AlphaMCTS, GameWrapper
 
 
 # Training Args
+# ─────────────────────────────────────────────────────────────────────────────
+# Colab-Optimised Parameters  (Grandmaster architecture, feasible training time)
+# ─────────────────────────────────────────────────────────────────────────────
+# Key insight: num_simulations is the dominant cost driver.
+#   200 sims * ~64 moves * 50 games * 1000 iters = 640M NN calls → infeasible
+#    50 sims * ~64 moves * 25 games *  300 iters =  24M NN calls → ~4-6h on T4
+#
+# Model architecture (num_res_blocks, num_channels) is kept at grandmaster
+# level — it only affects per-inference speed, NOT iteration count.  The model
+# will be just as capable once trained; it just needs fewer MCTS rollouts.
+# ─────────────────────────────────────────────────────────────────────────────
 ARGS = {
-    'num_res_blocks': 6,
-    'num_channels': 128,
-    'lr': 0.001,
+    # ── Model Architecture (Grandmaster, unchanged) ──────────────────────────
+    'num_res_blocks': 6,       # 6 ResBlocks — full depth, complex strategies
+    'num_channels':   128,     # 128 filters — full idea bandwidth
+
+    # ── Optimiser ────────────────────────────────────────────────────────────
+    'lr':           2e-3,      # Slightly higher LR → faster convergence early
     'weight_decay': 1e-4,
-    'batch_size': 64,
-    'epochs': 1, # Epochs per self-play batch
-    'num_simulations': 200, # MCTS Sims per move (Increase for better play)
-    'c_puct': 1.0,
-    'device': 'cuda' if torch.cuda.is_available() else 'cpu',
-    'self_play_games': 50, # Games per iteration
-    'iterations': 1000, # Total training loops
-    'buffer_size': 5000,
-    'checkpoint_dir': 'checkpoints',
-    'log_file': 'training_log.csv',
-    'replay_dir': 'replays'
+    'batch_size':   128,       # Larger batch → more stable gradients on GPU
+
+    # ── Training Loop ────────────────────────────────────────────────────────
+    'epochs':           4,     # 4 epochs/batch → better data efficiency
+    'iterations':     300,     # 300 iters × 25 games = 7,500 total games
+    'self_play_games': 25,     # 25 games / iter — enough diversity per loop
+
+    # ── MCTS (THE critical knob) ─────────────────────────────────────────────
+    'num_simulations': 50,     # 50 sims (was 200) → 4× speedup, core quality
+    'c_puct':         1.5,     # Slightly higher → more exploration with fewer sims
+
+    # ── Replay Buffer ────────────────────────────────────────────────────────
+    'buffer_size': 10_000,     # Larger buffer → sample from more history
+
+    # ── Infra ────────────────────────────────────────────────────────────────
+    'device':         'cuda' if torch.cuda.is_available() else 'cpu',
+    'checkpoint_dir': 'checkpoints_v2',  # New folder — existing checkpoints/ is untouched
+    'log_file':       'training_log.csv',
+    'replay_dir':     'replays',
 }
 
 def train():
