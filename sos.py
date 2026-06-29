@@ -11,7 +11,9 @@ import os
 import sys
 
 # Import Bot Logic
+import threading
 from greedy_bot import SOSBot
+from smart_bot import SmartBot
 
 # Helper: Blend Images using Numpy
 def blend_images(bg_img, overlay_img):
@@ -115,11 +117,35 @@ def blend_images(bg_img, overlay_img):
 # BOT WRAPPER (From sos_bot.py)
 
 class AlphaBot:
-    def __init__(self, model_path='checkpoints/best.pth'):
-        print("AlphaBot is currently a placeholder.")
+    """Strong opponent for the 'AlphaZero' slot.
 
-    def choose_move_wrapper(self, board, current_sos, current_scores, current_player_idx):
-        return None
+    Uses a trained Expert-Iteration neural net if one is available
+    (neural_bot.py + a checkpoint); otherwise it falls back to the classical
+    deep-search SmartBot, so this slot is ALWAYS genuinely strong instead of
+    the old no-op placeholder that silently dropped back to greedy.
+    """
+    def __init__(self, time_budget=9.0):
+        self.wrap_around = True
+        self._fallback = SmartBot(wrap_around=True, time_budget=time_budget)
+        self._neural = None
+        try:
+            from neural_bot import NeuralBot
+            cand = NeuralBot(wrap_around=True)
+            if getattr(cand, 'available', False):
+                self._neural = cand
+                print("[AlphaBot] Using trained neural net.")
+        except Exception as e:
+            print(f"[AlphaBot] Neural net unavailable ({e}); using deep search.")
+
+    def choose_move(self, board):
+        self._fallback.wrap_around = self.wrap_around
+        if self._neural is not None:
+            self._neural.wrap_around = self.wrap_around
+            try:
+                return self._neural.choose_move(board)
+            except Exception as e:
+                print(f"[AlphaBot] Neural inference failed ({e}); deep search.")
+        return self._fallback.choose_move(board)
 
 
 # UI UTILS & BUTTON CLASS
@@ -360,8 +386,8 @@ winner_text = ""
 last_move_pos = None # Stores (r, c)
 last_move_sprite = None
 
-greedy_bot = SOSBot(wrap_around=True)
-alpha_bot = AlphaBot()
+greedy_bot = SmartBot(wrap_around=True, time_budget=2.5)   # rule-based bot, upgraded to a fast deep search
+alpha_bot = AlphaBot(time_budget=9.0)                      # 'AlphaZero' slot: neural net if trained, else deep search
 
 
 # RESOURCES & BATCHES
@@ -1166,37 +1192,78 @@ def end_game():
 # INPUT & BOT CONTROL
 
 
+_bot_result = None   # holds ((r, c), letter) produced by the worker thread
+
 def bot_turn_trigger(dt):
     bot_turn_execute()
 
 def bot_turn_execute():
-    global current_player, bot_moves_queue
-    
-    move = None
-    letter = 'S'
-    
-    if bot_type == BotType.ALPHA:
-        res = alpha_bot.choose_move_wrapper(board, SOS, scores, 1)
-        if res: move, letter = res
-        else: move, letter = greedy_bot.choose_move(board) 
-    else:
-        move, letter = greedy_bot.choose_move(board)
-        
+    # Kick off the (potentially multi-second) search on a background thread so
+    # the pyglet window keeps pumping events instead of freezing. The result is
+    # picked up by bot_poll() on the main thread, which applies the move.
+    global _bot_result
+    if game_state != GameState.PLAYING:
+        return
+
+    engine = alpha_bot if bot_type == BotType.ALPHA else greedy_bot
+    engine.wrap_around = wrap_around
+    snapshot = [row[:] for row in board]   # isolate the worker from live state
+    _bot_result = None
+
+    def worker():
+        global _bot_result
+        try:
+            _bot_result = engine.choose_move(snapshot)
+        except Exception as e:
+            print("Bot error:", e)
+            _bot_result = ('__err__',)
+
+    threading.Thread(target=worker, daemon=True).start()
+    pyglet.clock.unschedule(bot_poll)
+    pyglet.clock.schedule_interval(bot_poll, 1 / 30.0)
+
+def bot_poll(dt):
+    global _bot_result
+    if game_state != GameState.PLAYING:
+        pyglet.clock.unschedule(bot_poll)
+        return
+    if _bot_result is None:
+        return   # still thinking
+
+    res = _bot_result
+    _bot_result = None
+    pyglet.clock.unschedule(bot_poll)
+
+    if (not res) or res[0] == '__err__':
+        res = _first_empty_cell()
+    bot_apply_move(res[0], res[1])
+
+def _first_empty_cell():
+    for r in range(no_of_cells):
+        for c in range(no_of_cells):
+            if board[r][c] == ' ':
+                return (r, c), 'S'
+    return (0, 0), 'S'
+
+def bot_apply_move(move, letter):
+    global current_player
     r, c = move
-    if board[r][c] != ' ': 
-        print("Bot tried invalid move!")
-        return 
-        
+    if board[r][c] != ' ':
+        print("Bot tried invalid move! Falling back to first empty cell.")
+        (r, c), letter = _first_empty_cell()
+        if board[r][c] != ' ':
+            return
+
     place_symbol(r, c, letter)
     scored = check_win()
-    
+
     if scored and not is_board_full():
         pyglet.clock.schedule_once(bot_turn_trigger, 0.8)
     else:
         if is_board_full():
             end_game()
         elif not scored:
-            current_player = 0 
+            current_player = 0
 
 def is_board_full():
     for r in board:
