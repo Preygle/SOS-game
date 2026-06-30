@@ -1,3 +1,5 @@
 /.vscode
 pyglet/
 .psd
+lightning_env/
+venv/

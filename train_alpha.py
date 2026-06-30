@@ -33,25 +33,25 @@ ARGS = {
     'num_channels':   128,     # 128 filters — full idea bandwidth
 
     # ── Optimiser ────────────────────────────────────────────────────────────
-    'lr':           2e-3,      # Slightly higher LR → faster convergence early
+    'lr':           1e-3,      # Slightly higher LR → faster convergence early
     'weight_decay': 1e-4,
     'batch_size':   128,       # Larger batch → more stable gradients on GPU
 
     # ── Training Loop ────────────────────────────────────────────────────────
     'epochs':           4,     # 4 epochs/batch → better data efficiency
-    'iterations':     300,     # 300 iters × 25 games = 7,500 total games
-    'self_play_games': 25,     # 25 games / iter — enough diversity per loop
+    'iterations':     500,     # 500 iters × 25 games = 12,500 total games
+    'self_play_games': 50,     # 50 games / iter — enough diversity per loop
 
     # ── MCTS (THE critical knob) ─────────────────────────────────────────────
     'num_simulations': 50,     # 50 sims (was 200) → 4× speedup, core quality
-    'c_puct':         1.5,     # Slightly higher → more exploration with fewer sims
+    'c_puct':         1.7,     # Slightly higher → more exploration with fewer sims
 
     # ── Replay Buffer ────────────────────────────────────────────────────────
     'buffer_size': 10_000,     # Larger buffer → sample from more history
 
     # ── Infra ────────────────────────────────────────────────────────────────
     'device':         'cuda' if torch.cuda.is_available() else 'cpu',
-    'checkpoint_dir': 'checkpoints_v2',  # New folder — existing checkpoints/ is untouched
+    'checkpoint_dir': 'checkpoints_v3',  # New folder — existing checkpoints/ is untouched
     'log_file':       'training_log.csv',
     'replay_dir':     'replays',
 }
@@ -113,6 +113,7 @@ def train():
     
 
     for i in range(start_iter, ARGS['iterations']):
+        iter_start_time = time.time()
         print(f"--- Iteration {i+1}/{ARGS['iterations']} ---")
         
         # 1. Self Play
@@ -214,7 +215,23 @@ def train():
         avg_v = np.mean(v_losses) if v_losses else 0
         avg_moves = total_moves / ARGS['self_play_games']
         
-        print(f"Loss PI: {avg_pi:.4f}, Loss V: {avg_v:.4f}, Avg Moves: {avg_moves:.1f}")
+        iter_end_time = time.time()
+        elapsed = iter_end_time - iter_start_time
+        
+        if elapsed < 1:
+            time_str = f"{elapsed*1000:.1f}ms"
+        elif elapsed < 60:
+            time_str = f"{elapsed:.1f}s"
+        elif elapsed < 3600:
+            mins = int(elapsed // 60)
+            secs = elapsed % 60
+            time_str = f"{mins}m {secs:.1f}s"
+        else:
+            hrs = int(elapsed // 3600)
+            mins = int((elapsed % 3600) // 60)
+            time_str = f"{hrs}h {mins}m"
+        
+        print(f"Loss PI: {avg_pi:.4f}, Loss V: {avg_v:.4f}, Avg Moves: {avg_moves:.1f}, Time: {time_str}")
         
         with open(ARGS['log_file'], 'a') as f:
             f.write(f"{i},{avg_pi},{avg_v},{avg_pi+avg_v},0,{avg_moves}\n")
