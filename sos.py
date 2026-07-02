@@ -1192,7 +1192,8 @@ def end_game():
 # INPUT & BOT CONTROL
 
 
-_bot_result = None   # holds ((r, c), letter) produced by the worker thread
+_bot_result = None   # holds (generation, ((r, c), letter)) from the worker thread
+_bot_gen = 0         # bumped per search; stale workers' results are discarded
 
 def bot_turn_trigger(dt):
     bot_turn_execute()
@@ -1201,22 +1202,25 @@ def bot_turn_execute():
     # Kick off the (potentially multi-second) search on a background thread so
     # the pyglet window keeps pumping events instead of freezing. The result is
     # picked up by bot_poll() on the main thread, which applies the move.
-    global _bot_result
+    global _bot_result, _bot_gen
     if game_state != GameState.PLAYING:
         return
 
     engine = alpha_bot if bot_type == BotType.ALPHA else greedy_bot
     engine.wrap_around = wrap_around
     snapshot = [row[:] for row in board]   # isolate the worker from live state
+    _bot_gen += 1
+    gen = _bot_gen
     _bot_result = None
 
     def worker():
         global _bot_result
         try:
-            _bot_result = engine.choose_move(snapshot)
+            res = engine.choose_move(snapshot)
         except Exception as e:
             print("Bot error:", e)
-            _bot_result = ('__err__',)
+            res = ('__err__',)
+        _bot_result = (gen, res)
 
     threading.Thread(target=worker, daemon=True).start()
     pyglet.clock.unschedule(bot_poll)
@@ -1230,8 +1234,10 @@ def bot_poll(dt):
     if _bot_result is None:
         return   # still thinking
 
-    res = _bot_result
+    gen, res = _bot_result
     _bot_result = None
+    if gen != _bot_gen:
+        return   # stale result from a search started before a restart — ignore
     pyglet.clock.unschedule(bot_poll)
 
     if (not res) or res[0] == '__err__':
