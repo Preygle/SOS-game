@@ -93,6 +93,35 @@ The opponent is an **alpha-beta search engine** (`strong_bot.py`), not a neural 
 *   Full write-up, including why the neural branch was benched:
     [AI Architecture](docs/AI.md).
 
+### Fast vs LAYA — 20 games
+
+Head-to-head at the game's own settings: **Fast** is the search engine on a 0.8 s
+clock, **LAYA** is the Laya-driven bot on 5 s. Ten games on each board, seats
+alternating so the first-move edge cancels out.
+
+| board | record (Fast–LAYA–draw) | Fast score | avg points |
+| :-- | :-- | --: | :-- |
+| Orbit (wrap-around) | **8–0–2** | 90% | 10.7 – 4.0 |
+| Standard (no orbit) | **9–1–0** | 90% | 6.3 – 3.0 |
+| **Combined** | **17–1–2** | **90%** | 8.5 – 3.5 |
+
+LAYA won 1 of 20 and drew 2, despite thinking six times longer. Fast won every
+single game as the second player (10–0–0); LAYA's only win and both draws came
+when it moved first.
+
+Orbit games score roughly 70% more points than standard ones (14.7 vs 9.3 total),
+because wrapping edges give every cell a full set of lines and no dead corners.
+
+Reproduce:
+
+```bash
+python arena.py strong:0.8 laya:typed-decisions:time_budget=5.0 --games 10
+python arena.py strong:0.8 laya:typed-decisions:time_budget=5.0 --games 10 --no-wrap
+```
+
+Why LAYA loses to a bot thinking for a fraction of the time is measured in
+detail in [docs/LAYA_BOT.md](docs/LAYA_BOT.md).
+
 ## 📜 Rules
 For a complete guide on how to play, including special Orbit Mode edge cases, see [RULES.md](docs/RULES.md).
 
