@@ -14,6 +14,7 @@ import sys
 import threading
 from greedy_bot import SOSBot
 from smart_bot import SmartBot
+from strong_bot import StrongBot
 
 # Helper: Blend Images using Numpy
 def blend_images(bg_img, overlay_img):
@@ -117,35 +118,24 @@ def blend_images(bg_img, overlay_img):
 # BOT WRAPPER (From sos_bot.py)
 
 class AlphaBot:
-    """Strong opponent for the 'AlphaZero' slot.
+    """The deep-thinking opponent slot.
 
-    Uses a trained Expert-Iteration neural net if one is available
-    (neural_bot.py + a checkpoint); otherwise it falls back to the classical
-    deep-search SmartBot, so this slot is ALWAYS genuinely strong instead of
-    the old no-op placeholder that silently dropped back to greedy.
+    Both bot slots now run the same alpha-beta engine (strong_bot.py); they
+    differ only in how long they are allowed to think. The old wiring had this
+    slot fall through to a policy network that plays one forward pass with no
+    search -- it measured *weaker* than the greedy bot (3-3 head to head, 14.8
+    points against 23.8), so picking "AlphaZero" in the menu actually handed you
+    the worst opponent in the project. The network is still available through
+    neural_bot.py for anyone who wants it; it is just no longer wired into a
+    slot that promises strength.
     """
-    def __init__(self, time_budget=9.0):
+    def __init__(self, time_budget=3.0):
         self.wrap_around = True
-        self._fallback = SmartBot(wrap_around=True, time_budget=time_budget)
-        self._neural = None
-        try:
-            from neural_bot import NeuralBot
-            cand = NeuralBot(wrap_around=True)
-            if getattr(cand, 'available', False):
-                self._neural = cand
-                print("[AlphaBot] Using trained neural net.")
-        except Exception as e:
-            print(f"[AlphaBot] Neural net unavailable ({e}); using deep search.")
+        self._engine = StrongBot(wrap_around=True, time_budget=time_budget)
 
     def choose_move(self, board):
-        self._fallback.wrap_around = self.wrap_around
-        if self._neural is not None:
-            self._neural.wrap_around = self.wrap_around
-            try:
-                return self._neural.choose_move(board)
-            except Exception as e:
-                print(f"[AlphaBot] Neural inference failed ({e}); deep search.")
-        return self._fallback.choose_move(board)
+        self._engine.wrap_around = self.wrap_around
+        return self._engine.choose_move(board)
 
 
 # UI UTILS & BUTTON CLASS
@@ -359,10 +349,12 @@ class GameState(Enum):
 class GameMode(Enum):
     PVP = 0
     PVE = 1
+    EVE = 2        # bot vs bot, any two slots, including two of the same
 
 class BotType(Enum):
     GREEDY = 0
     ALPHA = 1
+    LAYA = 2
 
 # Window Setup
 window = pyglet.window.Window(fullscreen=True, caption="SOS Game - Ultimate")
@@ -373,6 +365,11 @@ pyglet.gl.glBlendFunc(pyglet.gl.GL_SRC_ALPHA, pyglet.gl.GL_ONE_MINUS_SRC_ALPHA)
 game_state = GameState.HOME
 game_mode = GameMode.PVP
 bot_type = BotType.GREEDY
+# Bot-vs-bot seats. They may name the same slot twice (two LAYA bots is a valid
+# and interesting match), in which case both seats share one engine instance --
+# these bots keep no per-game state, so sharing changes nothing but memory.
+bot_a_type = BotType.ALPHA
+bot_b_type = BotType.LAYA
 wrap_around = True
 
 players = ['P1', 'P2'] 
@@ -386,8 +383,68 @@ winner_text = ""
 last_move_pos = None # Stores (r, c)
 last_move_sprite = None
 
-greedy_bot = SmartBot(wrap_around=True, time_budget=2.5)   # rule-based bot, upgraded to a fast deep search
-alpha_bot = AlphaBot(time_budget=9.0)                      # 'AlphaZero' slot: neural net if trained, else deep search
+# Both slots are the same search engine at different time budgets, so the
+# menu choice is a speed/strength dial rather than a strong/weak lottery.
+greedy_bot = StrongBot(wrap_around=True, time_budget=0.8)   # fast slot: answers in under a second
+alpha_bot = AlphaBot(time_budget=6.0)                      # deep slot: the strongest setting
+
+# The Laya slot is an experiment, not a difficulty level: a System One decision
+# model picks the plan each turn and the engine executes it. It is much weaker
+# than the search (see docs/LAYA_BOT.md).
+#
+# Building it loads a 421M checkpoint, which takes ~40 s. That MUST NOT happen on
+# the main thread: pyglet draws from the main thread, so a blocking call there
+# stops the window repainting entirely and Windows reports the game as "Not
+# Responding" -- indistinguishable from a crash. It is therefore built either by
+# the preload thread below (started the moment you pick LAYA in the menu) or by
+# the bot's own worker thread, never by an event handler.
+laya_bot_instance = None
+laya_bot_lock = threading.Lock()
+laya_loading = False
+
+
+def get_laya_bot():
+    """Build-or-return the Laya bot. Safe to call from any worker thread.
+
+    The lock matters: the preload thread and a bot turn can race, and loading
+    two checkpoints at once would cost 3 GB and two worker processes.
+    """
+    global laya_bot_instance, laya_loading
+    with laya_bot_lock:
+        if laya_bot_instance is None:
+            from laya_bot import LayaBot
+            laya_loading = True
+            try:
+                laya_bot_instance = LayaBot(wrap_around=wrap_around, time_budget=5.0)
+            finally:
+                laya_loading = False
+        laya_bot_instance.wrap_around = wrap_around
+        return laya_bot_instance
+
+
+def engine_for(bt):
+    """The bot object for a slot. LAYA may block for ~40 s on first use, so
+    this must only ever be called from a worker thread."""
+    if bt == BotType.LAYA:
+        return get_laya_bot()
+    engine = alpha_bot if bt == BotType.ALPHA else greedy_bot
+    engine.wrap_around = wrap_around
+    return engine
+
+
+def bot_type_for_seat(player):
+    """Which slot plays this seat. In PvE the bot is always player 1."""
+    if game_mode == GameMode.EVE:
+        return bot_a_type if player == 0 else bot_b_type
+    return bot_type
+
+
+def preload_laya_bot():
+    """Start loading in the background as soon as the slot is chosen, so the
+    checkpoint is usually resident before the first bot turn arrives."""
+    if laya_bot_instance is not None:
+        return
+    threading.Thread(target=get_laya_bot, daemon=True).start()
 
 
 # RESOURCES & BATCHES
@@ -592,9 +649,14 @@ def setup_home():
     b2 = Button(cx - btn_w//2, cy - 120, btn_w, btn_h, "", main_batch, ui_group, btn_img, show_bot_settings, overlay=pve_img)
     buttons.append(b2)
     
-    # Exit
-    b3 = Button(cx - btn_w//2, cy - 240, btn_w, btn_h, "", main_batch, ui_group, btn_img, window.close, overlay=exit_img)
+    # Bot vs Bot. No artwork for this one, so it is a text button.
+    b3 = Button(cx - btn_w//2, cy - 240, btn_w, btn_h, "BOT vs BOT", main_batch,
+                ui_group, btn_img, show_eve_settings)
     buttons.append(b3)
+
+    # Exit
+    b4 = Button(cx - btn_w//2, cy - 360, btn_w, btn_h, "", main_batch, ui_group, btn_img, window.close, overlay=exit_img)
+    buttons.append(b4)
 
 def setup_pvp_settings():
     clear_ui()
@@ -644,6 +706,12 @@ def setup_bot_settings():
         bot_type = BotType.ALPHA
         setup_bot_settings()
 
+    def set_laya():
+        global bot_type
+        bot_type = BotType.LAYA
+        preload_laya_bot()      # ~40 s checkpoint load, off the main thread
+        setup_bot_settings()
+
     btn_w = 200
     bx = window.width//2 - btn_w - 20
     by = py + 300
@@ -653,7 +721,10 @@ def setup_bot_settings():
     
     b_greedy = Button(bx, by, btn_w, 60, "", main_batch, text_group, bg_g, set_greedy, overlay=greedy_img, is_selected=(bot_type == BotType.GREEDY))
     b_alpha = Button(window.width//2 + 20, by, btn_w, 60, "", main_batch, text_group, bg_a, set_alpha, overlay=alphago_img, is_selected=(bot_type == BotType.ALPHA))
-    buttons.extend([b_greedy, b_alpha])
+    # No artwork for this one, so it is a plain text button.
+    b_laya = Button(window.width//2 - btn_w//2, by - 75, btn_w, 60, "LAYA", main_batch,
+                    text_group, btn_img, set_laya, is_selected=(bot_type == BotType.LAYA))
+    buttons.extend([b_greedy, b_alpha, b_laya])
     
     # Wrap Toggle
     def toggle_wrap():
@@ -673,6 +744,62 @@ def setup_bot_settings():
     # Back
     b_back = Button(window.width//2 - btn_w//2, py - 100, btn_w, 50, "", main_batch, text_group, btn_img, return_home, overlay=back_img)
     buttons.append(b_back)
+
+def setup_eve_settings():
+    """Pick the two bots. Either column may name any slot, including the same
+    one twice, so LAYA vs LAYA or Deep vs Deep are both valid matches."""
+    clear_ui()
+    py = window.height // 2 - 250
+
+    sprites.append(pyglet.text.Label(
+        "Bot vs Bot", font_name=custom_font, font_size=36,
+        x=window.width // 2, y=py + 500 - 60, anchor_x='center',
+        batch=main_batch, group=text_group))
+
+    btn_w = 200
+    left = window.width // 2 - btn_w - 20
+    right = window.width // 2 + 20
+
+    for col_x, seat, current in ((left, 'a', bot_a_type), (right, 'b', bot_b_type)):
+        sprites.append(pyglet.text.Label(
+            "Player 1" if seat == 'a' else "Player 2",
+            font_name=custom_font, font_size=16,
+            x=col_x + btn_w // 2, y=py + 370, anchor_x='center',
+            batch=main_batch, group=text_group))
+        for i, bt in enumerate((BotType.GREEDY, BotType.ALPHA, BotType.LAYA)):
+            def pick(seat=seat, bt=bt):
+                global bot_a_type, bot_b_type
+                if seat == 'a':
+                    bot_a_type = bt
+                else:
+                    bot_b_type = bt
+                if bt == BotType.LAYA:
+                    preload_laya_bot()     # ~40 s load, off the main thread
+                setup_eve_settings()
+            buttons.append(Button(col_x, py + 300 - i * 70, btn_w, 60,
+                                  BOT_LABELS[bt], main_batch, text_group, btn_img,
+                                  pick, is_selected=(current == bt)))
+
+    def toggle_wrap():
+        global wrap_around
+        wrap_around = not wrap_around
+        setup_eve_settings()
+
+    buttons.append(Button(window.width // 2 - btn_w // 2, py + 200 - 100, btn_w, 60, "",
+                          main_batch, text_group, btn_img, toggle_wrap,
+                          overlay=orbit_img, is_selected=wrap_around))
+    buttons.append(Button(window.width // 2 - btn_w // 2, py + 80 - 100, btn_w, 80, "",
+                          main_batch, text_group, btn_img, start_eve, overlay=start_img))
+    buttons.append(Button(window.width // 2 - btn_w // 2, py - 100 - 100, btn_w, 50, "",
+                          main_batch, text_group, btn_img, return_home, overlay=back_img))
+
+
+def show_eve_settings():
+    global game_state
+    game_state = GameState.SETTINGS_POPUP
+    reset_sprites()
+    setup_eve_settings()
+
 
 def return_home():
     global game_state
@@ -706,6 +833,22 @@ def start_pve():
     game_state = GameState.PLAYING
     greedy_bot.wrap_around = wrap_around
     start_game()
+
+BOT_LABELS = {BotType.GREEDY: 'Fast', BotType.ALPHA: 'Deep', BotType.LAYA: 'LAYA'}
+
+
+def start_eve():
+    global game_mode, game_state, players
+    game_mode = GameMode.EVE
+    a, b = BOT_LABELS[bot_a_type], BOT_LABELS[bot_b_type]
+    # Two of the same slot would give both seats the same name, so number them.
+    players = [a, b] if a != b else ['%s 1' % a, '%s 2' % b]
+    game_state = GameState.PLAYING
+    if BotType.LAYA in (bot_a_type, bot_b_type):
+        preload_laya_bot()
+    start_game()
+    pyglet.clock.schedule_once(bot_turn_trigger, 0.8)
+
 
 def reset_sprites():
     global last_move_sprite, hc, selected_cell, history_bg_shape, show_history
@@ -1206,8 +1349,9 @@ def bot_turn_execute():
     if game_state != GameState.PLAYING:
         return
 
-    engine = alpha_bot if bot_type == BotType.ALPHA else greedy_bot
-    engine.wrap_around = wrap_around
+    # Which slot is on move: in EvE that depends on the seat. Resolving the
+    # engine is deferred to the worker because LAYA may still be loading.
+    seat_bot = bot_type_for_seat(current_player)
     snapshot = [row[:] for row in board]   # isolate the worker from live state
     _bot_gen += 1
     gen = _bot_gen
@@ -1216,9 +1360,11 @@ def bot_turn_execute():
     def worker():
         global _bot_result
         try:
-            res = engine.choose_move(snapshot)
+            res = engine_for(seat_bot).choose_move(snapshot)
         except Exception as e:
+            import traceback
             print("Bot error:", e)
+            traceback.print_exc()
             res = ('__err__',)
         _bot_result = (gen, res)
 
@@ -1264,12 +1410,18 @@ def bot_apply_move(move, letter):
     scored = check_win()
 
     if scored and not is_board_full():
+        # Scoring keeps the turn, so the same bot moves again.
         pyglet.clock.schedule_once(bot_turn_trigger, 0.8)
     else:
         if is_board_full():
             end_game()
         elif not scored:
-            current_player = 0
+            if game_mode == GameMode.EVE:
+                # Both seats are bots: hand over and keep the match running.
+                current_player = 1 - current_player
+                pyglet.clock.schedule_once(bot_turn_trigger, 0.8)
+            else:
+                current_player = 0
 
 def is_board_full():
     for r in board:
@@ -1328,6 +1480,7 @@ def on_key_press(symbol, modifiers):
         return
 
     if game_state == GameState.PLAYING and selected_cell:
+        if game_mode == GameMode.EVE: return
         if (game_mode == GameMode.PVE and current_player == 1): return 
         
         r, c = selected_cell
@@ -1459,7 +1612,11 @@ def on_draw():
                               x=window.width//2, y=window.height//2 - 50, anchor_x='center', anchor_y='center').draw()
         else:
              turn_str = f"{players[current_player]}'s Turn"
-             if game_mode == GameMode.PVE and current_player == 1: turn_str = "Bot Thinking..."
+             if game_mode == GameMode.EVE:
+                 turn_str = ("Loading LAYA..." if laya_loading
+                             else "%s Thinking..." % players[current_player])
+             elif game_mode == GameMode.PVE and current_player == 1:
+                 turn_str = "Loading LAYA..." if laya_loading else "Bot Thinking..."
              pyglet.text.Label(turn_str, font_name=custom_font, font_size=24,
                                x=window.width//2, y=top_y, anchor_x='center').draw()
 

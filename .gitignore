@@ -3,3 +3,17 @@ pyglet/
 .psd
 lightning_env/
 venv/
+
+# Python build noise
+__pycache__/
+*.pyc
+
+# Training artefacts: tens of MB of checkpoints per run, regenerable by
+# distill_train.py and not what the game plays with.
+checkpoints_distill_*/
+
+# Exported models (1.6 GB) and anything under the separate Laya environment.
+*.onnx
+
+# Vendored skill repo with its own .git - would become a broken submodule.
+gauntlet-loop/

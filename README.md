@@ -2,15 +2,16 @@
 
 ![SOS Banner](assets/title.png)
 
-A modern, feature-rich implementation of the classic pen-and-paper game **SOS**, built with Python and Pyglet. This version introduces advanced gameplay mechanics like **Orbit Mode**, a sleek UI with animations, and a powerful AI opponent based on **AlphaZero**.
+A modern, feature-rich implementation of the classic pen-and-paper game **SOS**, built with Python and Pyglet. This version introduces advanced gameplay mechanics like **Orbit Mode**, a sleek UI with animations, and a genuinely strong AI opponent driven by an **alpha-beta search engine**.
 
 ## 🌟 Key Features
 
 ### 🎮 Game Modes
 *   **Player vs Player (PvP)**: Challenge a friend on the same device.
 *   **Player vs Bot (PvE)**: Test your skills against the AI.
-    *   **Greedy Bot**: A fast-paced bot that seizes immediate opportunities.
-    *   **AlphaZero AI**: A deep-learning neural network trained to master strategy (See [AI Architecture](docs/AI.md)).
+    *   **Fast**: the search engine on a 0.8 s clock — answers immediately, still strong.
+    *   **Deep**: the same engine on a 3 s clock — the strongest setting.
+    *   Both slots run `strong_bot.py`, so the menu choice is a speed dial rather than a strong/weak lottery (See [AI Architecture](docs/AI.md)).
 
 ### 🌀 Orbit Mode
 Transform the board into a **toroidal surface**!
@@ -45,9 +46,16 @@ Transform the board into a **toroidal surface**!
 python sos.py
 ```
 
-**Train the AI** (Optional):
+**Measure the AI** (bot vs bot, parallel across cores):
 ```bash
-python train_alpha.py --scratch
+python arena.py strong:1.0 smart:1.0 --games 16
+python test_strong_bot.py          # correctness, incl. brute-forced endgames
+```
+
+**Train the neural branch** (optional, and not what you play against — see
+[AI Architecture](docs/AI.md) section 7 for why):
+```bash
+python distill_train.py --games 150 --epochs 12
 ```
 
 ## 📸 Screenshots
@@ -67,12 +75,23 @@ python train_alpha.py --scratch
 
 ---
 
-## 🧠 AI Model
-The game features a custom **AlphaZero** implementation using PyTorch.
-*   **Architecture**: ResNet (6 Blocks, 128 Filters).
-*   **Input**: 8x8x6 Grid Tensor.
-*   **Training**: Self-Play Reinforcement Learning with MCTS.
-*   Read more in [AI Architecture](docs/AI.md).
+## 🧠 AI Engine
+The opponent is an **alpha-beta search engine** (`strong_bot.py`), not a neural net.
+
+*   **Rules core**: the board as 256 three-slot SOS "lines", so a move's points
+    and the whole threat set are O(1) lookups (~190k make/unmake per second).
+*   **Search**: negamax on score differential with the bonus turn folded in,
+    depth counted in *turns*, transpositions keyed on the board alone, and the
+    endgame **solved exactly** from ~13 empty cells down.
+*   **Leaf evaluation**: a greedy playout to the end of the game. This is the
+    part that mattered — swapping a standard quiescence leaf for it took the
+    engine from losing 4-11 to winning 14-2 against the previous bot.
+*   **Measured**: 31-9 (78%) over 40 games against the old `smart_bot` at equal
+    time, and 14-1-1 against `greedy`; still 12-4 while thinking for 0.8 s
+    against `smart_bot` on 2.5 s. The deep slot earns its clock — 88-90%
+    against a fixed reference, against 80% for a quarter-second budget.
+*   Full write-up, including why the neural branch was benched:
+    [AI Architecture](docs/AI.md).
 
 ## 📜 Rules
 For a complete guide on how to play, including special Orbit Mode edge cases, see [RULES.md](docs/RULES.md).

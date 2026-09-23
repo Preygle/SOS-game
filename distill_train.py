@@ -8,14 +8,26 @@ Your AlphaZero run showed the classic symptoms of the wrong tool for this game:
     "who is ahead" trivially predictable -> no real lookahead signal), and
   * self-play produced lopsided blow-outs (e.g. 53-0), so the net never learned
     nuanced defence.
-SOS has a cheap, exact, local scoring rule, so a classical search (smart_bot.py)
+SOS has a cheap, exact, local scoring rule, so a classical search (strong_bot.py)
 already plays strongly. Expert Iteration exploits that: we let the STRONG search
 bot teach a small network. The training targets are high quality from step one,
 so this converges in a fraction of the time, on CPU, with no value collapse.
 
+TEACHER: strong_bot.StrongBot (alpha-beta + playout evaluation), which beats the
+previous smart_bot teacher 14-2 at equal time. Better labels, better student.
+
+READ THIS BEFORE YOU TRAIN
+--------------------------
+A distilled student here plays ONE forward pass with no search, and on this
+project's CPU-only torch that is a losing trade: a playout costs ~0.2 ms while a
+forward pass costs ~1 ms, so the same millisecond buys more strength as search
+than as network. Measured, the old distilled net could not beat even greedy_bot
+(3-3, 14.8 points to 23.8). Training here is worth doing to study distillation,
+not to get a stronger opponent -- for that, raise strong_bot's time budget.
+
 PIPELINE
 --------
-  1. Self-play games where SmartBot (the teacher) picks moves (with a little
+  1. Self-play games where StrongBot (the teacher) picks moves (with a little
      epsilon-randomness for state diversity). Record (state, teacher_move) and,
      at game end, the result as the value target.
   2. On-the-fly dihedral (8x) symmetry augmentation when batching — valid for
@@ -48,7 +60,7 @@ import torch.optim as optim
 from models import AlphaZeroResNet
 from alpha_mcts import GameWrapper
 from game_logic import SOSGame
-from smart_bot import SmartBot
+from strong_bot import StrongBot
 
 N = 8
 ACTIONS = 128
@@ -92,7 +104,7 @@ def _char_board(int_board):
 
 # ── 1. Data generation via the teacher ───────────────────────────────────────
 def generate_data(num_games, teacher_budget, epsilon, wrap_around, verbose=True):
-    teacher = SmartBot(wrap_around=wrap_around, time_budget=teacher_budget)
+    teacher = StrongBot(wrap_around=wrap_around, time_budget=teacher_budget)
     examples = []  # (encoded_tensor np(6,8,8), action_int, player)
     t0 = time.perf_counter()
 
@@ -110,17 +122,24 @@ def generate_data(num_games, teacher_budget, epsilon, wrap_around, verbose=True)
             }
             legal = game.get_valid_actions()
 
-            if random.random() < epsilon:
-                action = random.choice(legal)
-            else:
-                (r, c), letter = teacher.choose_move(_char_board(game.board))
-                action = (r * N + c) + (0 if letter == 'S' else 64)
-                if action not in legal:                # safety
-                    action = random.choice(legal)
+            # The teacher's move is ALWAYS the training label (this is the
+            # expert we are distilling). Epsilon only diversifies which move we
+            # actually PLAY, so we visit more varied states -- but we still learn
+            # the expert's answer for the state we were in. Previously the random
+            # exploration move was recorded as the label, injecting ~epsilon of
+            # pure noise into the policy targets and capping how low policy loss
+            # could go.
+            (r, c), letter = teacher.choose_move(_char_board(game.board))
+            teacher_action = (r * N + c) + (0 if letter == 'S' else 64)
+            if teacher_action not in legal:            # safety
+                teacher_action = random.choice(legal)
+
+            play_action = random.choice(legal) if random.random() < epsilon \
+                else teacher_action
 
             enc = GameWrapper.encode_state(state).numpy().astype(np.float32)
-            per_game.append((enc, action, game.current_player))
-            game.step(action)
+            per_game.append((enc, teacher_action, game.current_player))
+            game.step(play_action)
 
         s0, s1 = game.scores[0], game.scores[1]
         winner = 0 if s0 > s1 else (1 if s1 > s0 else -1)
